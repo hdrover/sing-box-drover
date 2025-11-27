@@ -1,0 +1,51 @@
+{
+  "inbounds": [
+    {
+      "type": "mixed",
+      "tag": "mixed-in",
+      "listen": "127.0.0.1",
+      "listen_port": 1080
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "selector",
+      "tag": "proxy-select",
+      "outbounds": [
+        "Proxy1",
+        "Proxy2"
+      ],
+      "default": "Proxy1",
+      "interrupt_exist_connections": true
+    },
+    {
+      "type": "shadowsocks",
+      "tag": "Proxy1",
+      "server": "192.168.1.1",
+      "server_port": 80,
+      "method": "chacha20-ietf-poly1305",
+      "password": "change-me"
+    },
+    {
+      "type": "shadowsocks",
+      "tag": "Proxy2",
+      "server": "192.168.1.2",
+      "server_port": 80,
+      "method": "chacha20-ietf-poly1305",
+      "password": "change-me"
+    }
+  ],
+  "route": {
+    "final": "proxy-select"
+  },
+  "experimental": {
+    "clash_api": {
+      "external_controller": "127.0.0.1:9090",
+      "secret": "change-me"
+    }
+  }
+}
