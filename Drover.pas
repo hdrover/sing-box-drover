@@ -5,7 +5,7 @@ interface
 uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes,
   Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.ExtCtrls, Vcl.Menus, SystemProxy, System.Net.HttpClient,
-  System.Net.URLClient, System.JSON, System.IOUtils, System.Generics.Collections, Options;
+  System.Net.URLClient, System.JSON, System.IOUtils, System.Generics.Collections, Options, JsonUtils;
 
 type
   TConfigSelector = record
@@ -149,6 +149,7 @@ begin
     raise Exception.Create('Configuration file not found.');
 
   jsonText := TFile.ReadAllText(configPath, TEncoding.UTF8);
+  jsonText := NormalizeJson(jsonText);
   rootValue := TJSONObject.ParseJSONValue(jsonText);
   if rootValue = nil then
     raise Exception.Create('Configuration file is corrupted or contains invalid JSON.');
