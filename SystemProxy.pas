@@ -78,7 +78,7 @@ begin
     opts[1].Value.pszValue := PChar(proxyStr);
 
     opts[2].dwOption := INTERNET_PER_CONN_PROXY_BYPASS;
-    opts[2].Value.pszValue := 'local';
+    opts[2].Value.pszValue := '<local>';
   end;
 
   result := InternetSetOption(nil, INTERNET_OPTION_PER_CONNECTION_OPTION, @list, SizeOf(list));
