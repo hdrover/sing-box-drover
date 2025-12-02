@@ -3,11 +3,15 @@ program sing_box_drover;
 {$R *.dres}
 
 uses
-  Winapi.Windows, Winapi.Messages, System.SysUtils, Vcl.Forms,
-  Main in 'Main.pas' {frmMain} ,
+  Winapi.Windows,
+  Winapi.Messages,
+  System.SysUtils,
+  Vcl.Forms,
+  Main in 'Main.pas' {frmMain},
   SystemProxy in 'SystemProxy.pas',
   Drover in 'Drover.pas',
-  Options in 'Options.pas';
+  Options in 'Options.pas',
+  JsonUtils in 'JsonUtils.pas';
 
 {$R *.res}
 

@@ -83,7 +83,7 @@ var
   jobHandle: THandle;
   si: STARTUPINFO;
   pi: PROCESS_INFORMATION;
-  cmd: string;
+  cmd, workDir: string;
 begin
   if not TFile.Exists(exePath) then
     raise Exception.Create('sing-box executable not found.');
@@ -106,8 +106,9 @@ begin
   si.cb := SizeOf(si);
 
   cmd := Format('"%s" run -c "%s"', [exePath, configPath]);
+  workDir := ExtractFileDir(exePath);
 
-  if not CreateProcess(nil, PChar(cmd), nil, nil, false, CREATE_NO_WINDOW, nil, nil, si, pi) then
+  if not CreateProcess(nil, PChar(cmd), nil, nil, false, CREATE_NO_WINDOW, nil, PChar(workDir), si, pi) then
     RaiseLastOSError;
 
   try

@@ -142,6 +142,7 @@
         <DCCReference Include="SystemProxy.pas"/>
         <DCCReference Include="Drover.pas"/>
         <DCCReference Include="Options.pas"/>
+        <DCCReference Include="JsonUtils.pas"/>
         <RcItem Include="icon.ico">
             <ResourceType>ICON</ResourceType>
             <ResourceId>TRAY_ICON</ResourceId>
