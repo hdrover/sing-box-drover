@@ -64,15 +64,19 @@ var
   selector: TConfigSelector;
   outboundName: string;
   popupItems, selectorItem, outboundItem: TMenuItem;
-  prevIndex: integer;
-  selectorI, outboundI: integer;
+  insertIndex, selectorCount, selectorI, outboundI: integer;
+  isNested: boolean;
+  itemOwner: TComponent;
 begin
   selectors := FDrover.sbConfig.selectors;
-  if Length(selectors) < 1 then
+  selectorCount := Length(selectors);
+  if (selectorCount < 1) or (selectorCount > 50) then
     exit;
 
+  isNested := FDrover.Options.selectorMenuLayout = 'nested';
+
   popupItems := PopupMenu.Items;
-  prevIndex := popupItems.IndexOf(miBeforeSelectors);
+  insertIndex := popupItems.IndexOf(miBeforeSelectors) + 1;
   selectorItem := nil;
 
   for selectorI := Low(selectors) to High(selectors) do
@@ -82,26 +86,57 @@ begin
     selectorItem := TMenuItem.Create(popupItems);
     selectorItem.Caption := selector.name;
 
+    if not isNested then
+    begin
+      selectorItem.Enabled := false;
+      popupItems.Insert(insertIndex, selectorItem);
+      Inc(insertIndex);
+    end;
+
+    outboundItem := nil;
+    if isNested then
+      itemOwner := selectorItem
+    else
+      itemOwner := popupItems;
+
     for outboundI := Low(selector.outbounds) to High(selector.outbounds) do
     begin
       outboundName := selector.outbounds[outboundI];
 
-      outboundItem := TMenuItem.Create(selectorItem);
+      outboundItem := TMenuItem.Create(itemOwner);
       outboundItem.Caption := outboundName;
       outboundItem.AutoCheck := true;
       outboundItem.RadioItem := true;
       outboundItem.OnClick := miSelectorClick;
       outboundItem.Tag := selectorI * 1000 + outboundI;
       outboundItem.Checked := (outboundI = selector.default);
+      outboundItem.GroupIndex := selectorI + 10;
 
-      selectorItem.Add(outboundItem);
+      if isNested then
+      begin
+        selectorItem.Add(outboundItem);
+      end
+      else
+      begin
+        popupItems.Insert(insertIndex, outboundItem);
+        Inc(insertIndex);
+      end;
     end;
 
-    popupItems.Insert(prevIndex + 1, selectorItem);
-    prevIndex := popupItems.IndexOf(selectorItem);
+    if (not isNested) and Assigned(outboundItem) then
+    begin
+      popupItems.InsertNewLineAfter(outboundItem);
+      Inc(insertIndex);
+    end;
+
+    if isNested then
+    begin
+      popupItems.Insert(insertIndex, selectorItem);
+      Inc(insertIndex);
+    end;
   end;
 
-  if selectorItem <> nil then
+  if isNested then
   begin
     popupItems.InsertNewLineAfter(selectorItem);
   end;

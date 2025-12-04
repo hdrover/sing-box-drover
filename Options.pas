@@ -16,6 +16,7 @@ type
     sbDir: string;
     sbConfigFile: string;
     systemProxyAuto: boolean;
+    selectorMenuLayout: string;
   end;
 
 function LoadOptions(filename: string): TDroverOptions;
@@ -58,6 +59,7 @@ begin
         result.sbConfigFile := s;
 
         result.systemProxyAuto := ReadBool(SECTION_MAIN, 'system-proxy-auto', false);
+        result.selectorMenuLayout := ReadString(SECTION_MAIN, 'selector-menu-layout', '');
       end;
     finally
       f.Free;

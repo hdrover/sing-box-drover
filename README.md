@@ -171,6 +171,8 @@ The program uses a simple INI-style config file that ships in the archive. The d
 sb-dir =
 sb-config-file = config.json
 system-proxy-auto = 1
+; Selector menu layout: "flat" or "nested"
+selector-menu-layout = flat
 ```
 
 Parameters:
@@ -185,5 +187,9 @@ Parameters:
     - `1` – enable the system proxy when the program starts and disable it when the program exits, while still allowing
       manual toggling.
     - `0` – do not change the system proxy automatically; only manual toggling via the tray icon.
+
+- `selector-menu-layout` – layout of selectors in the tray menu:
+    - `flat` (default) – each selector name is shown as a disabled header, with its options as radio items below, separated by a divider.
+    - `nested` – each selector is shown as a submenu containing its options.
 
 The rest of the behavior is fully controlled by your sing-box configuration.
