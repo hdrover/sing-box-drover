@@ -11,7 +11,9 @@ uses
   SystemProxy in 'SystemProxy.pas',
   Drover in 'Drover.pas',
   Options in 'Options.pas',
-  JsonUtils in 'JsonUtils.pas';
+  JsonUtils in 'JsonUtils.pas',
+  CoreSupervisor in 'CoreSupervisor.pas',
+  Logger in 'Logger.pas';
 
 {$R *.res}
 

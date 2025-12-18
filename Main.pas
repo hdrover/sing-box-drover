@@ -22,13 +22,19 @@ type
     procedure DrawSelectors;
     procedure ToggleSystemProxyIcon(enable: boolean);
     procedure ToggleSystemProxy(enable: boolean);
+    procedure FormCreate(Sender: TObject);
   private
     TrayIcon: TTrayIcon;
     FDrover: TDrover;
     isSystemProxyEnabled: boolean;
+    FClosePending: boolean;
+
+    procedure HandleDroverEvent(event: TDroverEvent);
+    procedure WMDroverCanClose(var msg: TMessage); message WM_DROVER_CAN_CLOSE;
+    procedure ShowBalloon(AText, ATitle: string; AFlags: TBalloonFlags = bfInfo; ATimeout: integer = 10000);
   public
 
-    procedure InitDrover(Drover: TDrover);
+    procedure InitDrover(ADrover: TDrover);
   end;
 
 var
@@ -38,24 +44,49 @@ implementation
 
 {$R *.dfm}
 
-procedure TfrmMain.InitDrover(Drover: TDrover);
+procedure TfrmMain.FormCreate(Sender: TObject);
 begin
-  FDrover := Drover;
-
+  FClosePending := false;
   isSystemProxyEnabled := false;
-
-  DrawSelectors();
 
   TrayIcon := TTrayIcon.Create(self);
   TrayIcon.PopupMenu := PopupMenu;
   TrayIcon.OnClick := TrayIconClick;
+  TrayIcon.Visible := true;
+end;
+
+procedure TfrmMain.InitDrover(ADrover: TDrover);
+begin
+  FDrover := ADrover;
+  FDrover.NotifyHandle := Handle;
+  FDrover.OnEvent := HandleDroverEvent;
+
+  DrawSelectors;
 
   if FDrover.Options.systemProxyAuto then
     ToggleSystemProxy(true)
   else
     ToggleSystemProxyIcon(false);
+end;
 
-  TrayIcon.Visible := true;
+procedure TfrmMain.HandleDroverEvent(event: TDroverEvent);
+begin
+  case event.kind of
+    dekError:
+      ShowBalloon(event.msg, '', bfError);
+  end;
+end;
+
+procedure TfrmMain.ShowBalloon(AText, ATitle: string; AFlags: TBalloonFlags = bfInfo; ATimeout: integer = 10000);
+begin
+  if (AFlags = bfError) and (ATitle = '') then
+    ATitle := 'Error';
+
+  TrayIcon.BalloonHint := AText;
+  TrayIcon.BalloonTitle := ATitle;
+  TrayIcon.BalloonFlags := AFlags;
+  TrayIcon.BalloonTimeout := ATimeout;
+  TrayIcon.ShowBalloonHint;
 end;
 
 procedure TfrmMain.DrawSelectors;
@@ -168,8 +199,29 @@ end;
 
 procedure TfrmMain.FormCloseQuery(Sender: TObject; var CanClose: boolean);
 begin
+  if not Assigned(FDrover) then
+  begin
+    CanClose := true;
+    exit;
+  end;
+
   if FDrover.Options.systemProxyAuto then
     ToggleSystemProxy(false);
+
+  CanClose := FDrover.Shutdown;
+
+  if not CanClose then
+  begin
+    FClosePending := true;
+  end;
+end;
+
+procedure TfrmMain.WMDroverCanClose(var msg: TMessage);
+begin
+  if not FClosePending then
+    exit;
+  FClosePending := false;
+  PostMessage(Handle, WM_CLOSE, 0, 0);
 end;
 
 procedure TfrmMain.miQuitClick(Sender: TObject);

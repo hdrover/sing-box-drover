@@ -15,6 +15,7 @@ object frmMain: TfrmMain
   Font.Name = 'Segoe UI'
   Font.Style = []
   OnCloseQuery = FormCloseQuery
+  OnCreate = FormCreate
   PixelsPerInch = 192
   TextHeight = 32
   object PopupMenu: TPopupMenu

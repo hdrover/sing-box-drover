@@ -5,7 +5,11 @@ interface
 uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes,
   Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.ExtCtrls, Vcl.Menus, SystemProxy, System.Net.HttpClient,
-  System.Net.URLClient, System.JSON, System.IOUtils, System.Generics.Collections, Options, JsonUtils;
+  System.Net.URLClient, System.JSON, System.IOUtils, System.Generics.Collections, Options, JsonUtils,
+  CoreSupervisor, Logger;
+
+const
+  WM_DROVER_CAN_CLOSE = WM_APP + 501;
 
 type
   TConfigSelector = record
@@ -30,14 +34,40 @@ type
     proxyPort: integer;
   end;
 
+  TDroverEventKind = (dekError);
+
+  TDroverEvent = record
+    kind: TDroverEventKind;
+    msg: string;
+  end;
+
+  TDroverEventHandler = procedure(event: TDroverEvent) of object;
+
   TDrover = class
+  private
+    FSupervisor: TCoreSupervisor;
+    FOnEvent: TDroverEventHandler;
+    FLogger: TLogger;
+    FNotifyHandle: HWND;
+    FShutdownRequested: boolean;
+    FShutdownComplete: boolean;
+    FDestroying: boolean;
+    FPendingEvents: TList<TDroverEvent>;
+
+    procedure SupervisorStateChanged(state: TCoreState; msg: string);
+    procedure SupervisorTerminated(sender: TObject);
+    procedure PostCanClose;
+    procedure NotifyEvent(kind: TDroverEventKind; msg: string);
+    procedure SetOnEvent(value: TDroverEventHandler);
+    procedure FlushPendingEvents;
   public
     sbConfig: TSingBoxConfig;
     FOptions: TDroverOptions;
     currentProcessDir: string;
 
     constructor Create;
-    procedure StartSingBox(const exePath, configPath: string);
+    destructor Destroy; override;
+
     function ReadSingBoxConfig(configPath: string): TSingBoxConfig;
     procedure CheckSingBoxConfig(cfg: TSingBoxConfig);
     procedure ResetSelectors;
@@ -46,8 +76,11 @@ type
     procedure CreateSelectorThread(tasks: TSelectorThreadTasks);
     function EnableSystemProxy: boolean;
     function DisableSystemProxy: boolean;
+    function Shutdown: boolean;
 
     property Options: TDroverOptions read FOptions;
+    property OnEvent: TDroverEventHandler read FOnEvent write SetOnEvent;
+    property NotifyHandle: HWND read FNotifyHandle write FNotifyHandle;
   end;
 
   TSelectorThread = class(TThread)
@@ -55,8 +88,7 @@ type
     FDrover: TDrover;
     tasks: TSelectorThreadTasks;
 
-    procedure Execute(); override;
-
+    procedure Execute; override;
   public
     constructor Create(Drover: TDrover; tasks: TSelectorThreadTasks);
     destructor Destroy; override;
@@ -64,62 +96,109 @@ type
 
 implementation
 
-constructor TDrover.Create();
+constructor TDrover.Create;
 var
-  configPath: string;
+  configPath, corePath: string;
 begin
+  FPendingEvents := TList<TDroverEvent>.Create;
+
   currentProcessDir := IncludeTrailingPathDelimiter(ExtractFilePath(ParamStr(0)));
+
   FOptions := LoadOptions(currentProcessDir + OPTIONS_FILENAME);
+
+  FLogger := TLogger.Create(FOptions.logFile);
+
   configPath := FOptions.sbConfigFile;
   sbConfig := ReadSingBoxConfig(configPath);
   CheckSingBoxConfig(sbConfig);
-  StartSingBox(FOptions.sbDir + 'sing-box.exe', configPath);
-  ResetSelectors;
-end;
 
-procedure TDrover.StartSingBox(const exePath, configPath: string);
-var
-  info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION;
-  jobHandle: THandle;
-  si: STARTUPINFO;
-  pi: PROCESS_INFORMATION;
-  cmd, workDir: string;
-begin
-  if not TFile.Exists(exePath) then
+  corePath := FOptions.sbDir + 'sing-box.exe';
+  if not TFile.Exists(corePath) then
     raise Exception.Create('sing-box executable not found.');
 
-  if not TFile.Exists(configPath) then
-    raise Exception.Create('Configuration file not found.');
+  FSupervisor := TCoreSupervisor.Create(corePath, FLogger);
+  FSupervisor.OnStateChanged := SupervisorStateChanged;
+  FSupervisor.OnTerminate := SupervisorTerminated;
+  FSupervisor.RequestStart(configPath);
+end;
 
-  jobHandle := CreateJobObject(nil, 'SingBoxJob');
-  if jobHandle = 0 then
-    RaiseLastOSError;
+destructor TDrover.Destroy;
+begin
+  FDestroying := true;
 
-  ZeroMemory(@info, SizeOf(info));
-  info.BasicLimitInformation.LimitFlags := JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+  if Assigned(FSupervisor) then
+  begin
+    FSupervisor.OnStateChanged := nil;
+    FSupervisor.OnTerminate := nil;
 
-  if not SetInformationJobObject(jobHandle, JobObjectExtendedLimitInformation, @info, SizeOf(info)) then
-    RaiseLastOSError;
-
-  ZeroMemory(@si, SizeOf(si));
-  ZeroMemory(@pi, SizeOf(pi));
-  si.cb := SizeOf(si);
-
-  cmd := Format('"%s" run -c "%s"', [exePath, configPath]);
-  workDir := ExtractFileDir(exePath);
-
-  if not CreateProcess(nil, PChar(cmd), nil, nil, false, CREATE_NO_WINDOW, nil, PChar(workDir), si, pi) then
-    RaiseLastOSError;
-
-  try
-    if not AssignProcessToJobObject(jobHandle, pi.hProcess) then
+    if not FSupervisor.Finished then
     begin
-      TerminateProcess(pi.hProcess, 1);
-      RaiseLastOSError;
+      FSupervisor.Terminate;
+      TThread.RemoveQueuedEvents(FSupervisor);
+      FSupervisor.WaitFor;
+      TThread.RemoveQueuedEvents(FSupervisor);
     end;
-  finally
-    CloseHandle(pi.hThread);
-    CloseHandle(pi.hProcess);
+
+    FreeAndNil(FSupervisor);
+  end;
+
+  FreeAndNil(FPendingEvents);
+  FreeAndNil(FLogger);
+
+  inherited;
+end;
+
+procedure TDrover.SetOnEvent(value: TDroverEventHandler);
+begin
+  FOnEvent := value;
+  if Assigned(FOnEvent) then
+    FlushPendingEvents;
+end;
+
+procedure TDrover.NotifyEvent(kind: TDroverEventKind; msg: string);
+var
+  ev: TDroverEvent;
+begin
+  ev.kind := kind;
+  ev.msg := msg;
+
+  if Assigned(FOnEvent) then
+    FOnEvent(ev)
+  else
+    FPendingEvents.Add(ev);
+end;
+
+procedure TDrover.FlushPendingEvents;
+var
+  ev: TDroverEvent;
+begin
+  for ev in FPendingEvents do
+    FOnEvent(ev);
+  FPendingEvents.Clear;
+end;
+
+procedure TDrover.SupervisorStateChanged(state: TCoreState; msg: string);
+begin
+  if FDestroying or FShutdownRequested then
+    exit;
+
+  case state of
+    csRunning:
+      ResetSelectors;
+
+    csFailed:
+      NotifyEvent(dekError, msg);
+  end;
+end;
+
+procedure TDrover.SupervisorTerminated(sender: TObject);
+begin
+  if FDestroying then
+    exit;
+
+  if FShutdownRequested then
+  begin
+    PostCanClose;
   end;
 end;
 
@@ -360,6 +439,34 @@ begin
   end;
 
   FDrover.SendApiRequest('DELETE', '/connections', '');
+end;
+
+function TDrover.Shutdown: boolean;
+begin
+  if FShutdownComplete then
+    exit(true);
+
+  if (not Assigned(FSupervisor)) or FSupervisor.Finished then
+  begin
+    FShutdownComplete := true;
+    exit(true);
+  end;
+
+  if not FShutdownRequested then
+  begin
+    FShutdownRequested := true;
+    FSupervisor.OnStateChanged := nil;
+    FSupervisor.Terminate;
+    TThread.RemoveQueuedEvents(FSupervisor);
+  end;
+
+  result := false;
+end;
+
+procedure TDrover.PostCanClose;
+begin
+  if (FNotifyHandle <> 0) and IsWindow(FNotifyHandle) then
+    PostMessage(FNotifyHandle, WM_DROVER_CAN_CLOSE, 0, 0);
 end;
 
 end.

@@ -17,6 +17,7 @@ type
     sbConfigFile: string;
     systemProxyAuto: boolean;
     selectorMenuLayout: string;
+    logFile: string;
   end;
 
 function LoadOptions(filename: string): TDroverOptions;
@@ -60,6 +61,13 @@ begin
 
         result.systemProxyAuto := ReadBool(SECTION_MAIN, 'system-proxy-auto', false);
         result.selectorMenuLayout := ReadString(SECTION_MAIN, 'selector-menu-layout', '');
+
+        s := ReadString(SECTION_MAIN, 'log-file', '');
+        if (s <> '') and (not s.Contains(':')) then
+        begin
+          s := currentDir + s;
+        end;
+        result.logFile := s;
       end;
     finally
       f.Free;
