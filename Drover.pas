@@ -32,6 +32,7 @@ type
     selectors: TConfigSelectors;
     proxyHost: string;
     proxyPort: integer;
+    JSON: string;
   end;
 
   TDroverEventKind = (dekError);
@@ -98,7 +99,7 @@ implementation
 
 constructor TDrover.Create;
 var
-  configPath, corePath: string;
+  corePath: string;
 begin
   FPendingEvents := TList<TDroverEvent>.Create;
 
@@ -108,8 +109,7 @@ begin
 
   FLogger := TLogger.Create(FOptions.logFile);
 
-  configPath := FOptions.sbConfigFile;
-  sbConfig := ReadSingBoxConfig(configPath);
+  sbConfig := ReadSingBoxConfig(FOptions.sbConfigFile);
   CheckSingBoxConfig(sbConfig);
 
   corePath := FOptions.sbDir + 'sing-box.exe';
@@ -119,7 +119,7 @@ begin
   FSupervisor := TCoreSupervisor.Create(corePath, FLogger);
   FSupervisor.OnStateChanged := SupervisorStateChanged;
   FSupervisor.OnTerminate := SupervisorTerminated;
-  FSupervisor.RequestStart(configPath);
+  FSupervisor.RequestStart(sbConfig.JSON);
 end;
 
 destructor TDrover.Destroy;
@@ -306,6 +306,8 @@ begin
       obj.TryGetValue('external_controller', result.clashApiExternalController);
       obj.TryGetValue('secret', result.clashApiSecret);
     end;
+
+    result.JSON := jsonText;
   finally
     rootValue.Free;
   end;

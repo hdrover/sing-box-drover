@@ -13,7 +13,7 @@ type
 
   TCoreCommand = record
     kind: TCoreCommandKind;
-    configPath: string;
+    configJson: string;
   end;
 
   TCoreCommandQueue = TThreadedQueue<TCoreCommand>;
@@ -33,7 +33,7 @@ type
 
     procedure SetStateAndNotify(state: TCoreState; msg: string = '');
     procedure HandleCommand(cmd: TCoreCommand);
-    procedure DoStart(configPath: string);
+    procedure DoStart(configJson: string);
     function SendCtrlCToConsole(processId: DWORD): boolean;
     procedure DoStopGraceful;
     procedure CheckProcessStatus;
@@ -46,7 +46,7 @@ type
     constructor Create(AExePath: string; ALogger: TLogger);
     destructor Destroy; override;
 
-    procedure RequestStart(configPath: string);
+    procedure RequestStart(configJson: string);
     procedure RequestStop;
 
     property OnStateChanged: TCoreStateEvent read FOnStateChanged write FOnStateChanged;
@@ -158,12 +158,12 @@ begin
     end);
 end;
 
-procedure TCoreSupervisor.RequestStart(configPath: string);
+procedure TCoreSupervisor.RequestStart(configJson: string);
 var
   cmd: TCoreCommand;
 begin
   cmd.kind := cmdStart;
-  cmd.configPath := configPath;
+  cmd.configJson := configJson;
   FQueue.PushItem(cmd);
 end;
 
@@ -181,22 +181,59 @@ begin
 
   case cmd.kind of
     cmdStart:
-      DoStart(cmd.configPath);
+      DoStart(cmd.configJson);
     cmdStop:
       DoStopGraceful;
   end;
 end;
 
-procedure TCoreSupervisor.DoStart(configPath: string);
+procedure TCoreSupervisor.DoStart(configJson: string);
+  procedure SafeCloseHandle(var h: THandle);
+  begin
+    if (h <> 0) and (h <> INVALID_HANDLE_VALUE) then
+      CloseHandle(h);
+    h := 0;
+  end;
+
+  procedure WriteAllToHandle(h: THandle; const data: TBytes);
+  var
+    p: PByte;
+    remain: DWORD;
+    written: DWORD;
+  begin
+    if Length(data) = 0 then
+      exit;
+
+    p := @data[0];
+    remain := DWORD(Length(data));
+
+    while remain > 0 do
+    begin
+      written := 0;
+      if not WriteFile(h, p^, remain, written, nil) then
+        raise Exception.Create('WriteFile (stdin) failed.');
+
+      if written = 0 then
+        raise Exception.Create('WriteFile (stdin) wrote 0 bytes.');
+
+      inc(p, written);
+      dec(remain, written);
+    end;
+  end;
+
 var
   exePath: string;
-  jobHandle: THandle;
-  processHandle: THandle;
+  jobHandle, processHandle, threadHandle: THandle;
   processId: DWORD;
   jobInfo: JOBOBJECT_EXTENDED_LIMIT_INFORMATION;
   si: TStartupInfo;
   pi: TProcessInformation;
   cmdLine, workDir: string;
+  secAttr: TSecurityAttributes;
+  stdinReadPipe, stdinWritePipe: THandle;
+  hNullOut: THandle;
+  configBytes: TBytes;
+  resumeResult: DWORD;
 begin
   DoStopGraceful;
 
@@ -206,13 +243,15 @@ begin
 
   jobHandle := 0;
   processHandle := 0;
+  threadHandle := 0;
+
+  stdinReadPipe := 0;
+  stdinWritePipe := 0;
+  hNullOut := 0;
 
   try
     if not TFile.Exists(exePath) then
       raise Exception.Create('sing-box executable not found.');
-
-    if not TFile.Exists(configPath) then
-      raise Exception.Create('Configuration file not found.');
 
     jobHandle := CreateJobObject(nil, nil);
     if jobHandle = 0 then
@@ -224,27 +263,57 @@ begin
     if not SetInformationJobObject(jobHandle, JobObjectExtendedLimitInformation, @jobInfo, SizeOf(jobInfo)) then
       raise Exception.Create('SetInformationJobObject failed.');
 
+    ZeroMemory(@secAttr, SizeOf(secAttr));
+    secAttr.nLength := SizeOf(secAttr);
+    secAttr.bInheritHandle := true;
+    secAttr.lpSecurityDescriptor := nil;
+
+    if not CreatePipe(stdinReadPipe, stdinWritePipe, @secAttr, 0) then
+      raise Exception.Create('CreatePipe failed.');
+
+    if not SetHandleInformation(stdinWritePipe, HANDLE_FLAG_INHERIT, 0) then
+      raise Exception.Create('SetHandleInformation failed.');
+
+    hNullOut := CreateFile('NUL', GENERIC_WRITE, FILE_SHARE_READ or FILE_SHARE_WRITE, @secAttr, OPEN_EXISTING,
+      FILE_ATTRIBUTE_NORMAL, 0);
+    if hNullOut = INVALID_HANDLE_VALUE then
+      raise Exception.Create('CreateFile (NUL) failed.');
+
     ZeroMemory(@si, SizeOf(si));
     ZeroMemory(@pi, SizeOf(pi));
     si.cb := SizeOf(si);
-    si.dwFlags := STARTF_USESHOWWINDOW;
+    si.dwFlags := STARTF_USESHOWWINDOW or STARTF_USESTDHANDLES;
     si.wShowWindow := SW_HIDE;
+    si.hStdInput := stdinReadPipe;
+    si.hStdOutput := hNullOut;
+    si.hStdError := hNullOut;
 
-    cmdLine := Format('"%s" run -c "%s"', [exePath, configPath]);
+    cmdLine := Format('"%s" run -c stdin', [exePath]);
     workDir := ExtractFileDir(exePath);
 
-    if not CreateProcess(nil, PChar(cmdLine), nil, nil, false, CREATE_NEW_CONSOLE, nil, PChar(workDir), si, pi) then
+    if not CreateProcess(nil, PChar(cmdLine), nil, nil, true, CREATE_NEW_CONSOLE or CREATE_SUSPENDED, nil,
+      PChar(workDir), si, pi) then
       raise Exception.Create('CreateProcess failed.');
 
     processHandle := pi.hProcess;
+    threadHandle := pi.hThread;
     processId := pi.dwProcessId;
-    CloseHandle(pi.hThread);
+
+    SafeCloseHandle(stdinReadPipe);
+    SafeCloseHandle(hNullOut);
 
     if not AssignProcessToJobObject(jobHandle, processHandle) then
-    begin
-      TerminateProcess(processHandle, 1);
       raise Exception.Create('AssignProcessToJobObject failed.');
-    end;
+
+    configBytes := TEncoding.UTF8.GetBytes(configJson);
+    WriteAllToHandle(stdinWritePipe, configBytes);
+
+    SafeCloseHandle(stdinWritePipe);
+
+    resumeResult := ResumeThread(threadHandle);
+    SafeCloseHandle(threadHandle);
+    if resumeResult = DWORD(-1) then
+      raise Exception.Create('ResumeThread failed.');
 
     FJobHandle := jobHandle;
     FProcessHandle := processHandle;
@@ -260,9 +329,14 @@ begin
     on E: Exception do
     begin
       if processHandle <> 0 then
-        CloseHandle(processHandle);
-      if jobHandle <> 0 then
-        CloseHandle(jobHandle);
+        TerminateProcess(processHandle, 1);
+
+      SafeCloseHandle(stdinReadPipe);
+      SafeCloseHandle(stdinWritePipe);
+      SafeCloseHandle(hNullOut);
+      SafeCloseHandle(processHandle);
+      SafeCloseHandle(threadHandle);
+      SafeCloseHandle(jobHandle);
 
       SetStateAndNotify(csFailed, E.Message);
     end;
