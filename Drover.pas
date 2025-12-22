@@ -56,6 +56,7 @@ type
     FShutdownComplete: boolean;
     FDestroying: boolean;
     FPendingEvents: TList<TDroverEvent>;
+    FIsAdmin: boolean;
 
     procedure SupervisorStateChanged(state: TCoreState; msg: string);
     procedure SupervisorTerminated(sender: TObject);
@@ -63,7 +64,9 @@ type
     procedure NotifyEvent(kind: TDroverEventKind; msg: string);
     procedure SetOnEvent(value: TDroverEventHandler);
     procedure FlushPendingEvents;
-    procedure removeTunInbounds(rootObj: TJSONObject);
+    procedure RemoveTunInbounds(rootObj: TJSONObject);
+    procedure StartCore(useTun: boolean);
+    function CheckIsAdmin: boolean;
   public
     sbConfig: TSingBoxConfig;
     FOptions: TDroverOptions;
@@ -85,6 +88,7 @@ type
     property Options: TDroverOptions read FOptions;
     property OnEvent: TDroverEventHandler read FOnEvent write SetOnEvent;
     property NotifyHandle: HWND read FNotifyHandle write FNotifyHandle;
+    property IsAdmin: boolean read FIsAdmin;
   end;
 
   TSelectorThread = class(TThread)
@@ -115,6 +119,8 @@ begin
   sbConfig := ReadSingBoxConfig(FOptions.sbConfigFile);
   CheckSingBoxConfig(sbConfig);
 
+  FIsAdmin := CheckIsAdmin;
+
   corePath := FOptions.sbDir + 'sing-box.exe';
   if not TFile.Exists(corePath) then
     raise Exception.Create('sing-box executable not found.');
@@ -122,7 +128,7 @@ begin
   FSupervisor := TCoreSupervisor.Create(corePath, FLogger);
   FSupervisor.OnStateChanged := SupervisorStateChanged;
   FSupervisor.OnTerminate := SupervisorTerminated;
-  FSupervisor.RequestStart(sbConfig.jsonWithoutTun);
+  StartCore(IsAdmin);
 end;
 
 destructor TDrover.Destroy;
@@ -149,6 +155,34 @@ begin
   FreeAndNil(FLogger);
 
   inherited;
+end;
+
+procedure TDrover.StartCore(useTun: boolean);
+var
+  configJson: string;
+begin
+  if useTun then
+    configJson := sbConfig.jsonWithTun
+  else
+    configJson := sbConfig.jsonWithoutTun;
+
+  FSupervisor.RequestStart(configJson);
+end;
+
+function TDrover.CheckIsAdmin: boolean;
+var
+  tokenHandle: THandle;
+  elevation: TOKEN_ELEVATION;
+  returnLength: DWORD;
+begin
+  result := false;
+  if OpenProcessToken(GetCurrentProcess, TOKEN_QUERY, tokenHandle) then
+    try
+      if GetTokenInformation(tokenHandle, TokenElevation, @elevation, SizeOf(elevation), returnLength) then
+        result := elevation.TokenIsElevated <> 0;
+    finally
+      CloseHandle(tokenHandle);
+    end;
 end;
 
 procedure TDrover.SetOnEvent(value: TDroverEventHandler);
@@ -205,7 +239,7 @@ begin
   end;
 end;
 
-procedure TDrover.removeTunInbounds(rootObj: TJSONObject);
+procedure TDrover.RemoveTunInbounds(rootObj: TJSONObject);
 var
   i: integer;
   inboundsArr: TJSONArray;
@@ -342,7 +376,7 @@ begin
 
     if result.hasTunInbound then
     begin
-      removeTunInbounds(rootObj);
+      RemoveTunInbounds(rootObj);
       result.jsonWithoutTun := rootObj.ToString;
     end
     else
