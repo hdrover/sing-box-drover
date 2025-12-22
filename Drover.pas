@@ -32,7 +32,9 @@ type
     selectors: TConfigSelectors;
     proxyHost: string;
     proxyPort: integer;
-    JSON: string;
+    hasTunInbound: boolean;
+    jsonWithTun: string;
+    jsonWithoutTun: string;
   end;
 
   TDroverEventKind = (dekError);
@@ -61,6 +63,7 @@ type
     procedure NotifyEvent(kind: TDroverEventKind; msg: string);
     procedure SetOnEvent(value: TDroverEventHandler);
     procedure FlushPendingEvents;
+    procedure removeTunInbounds(rootObj: TJSONObject);
   public
     sbConfig: TSingBoxConfig;
     FOptions: TDroverOptions;
@@ -119,7 +122,7 @@ begin
   FSupervisor := TCoreSupervisor.Create(corePath, FLogger);
   FSupervisor.OnStateChanged := SupervisorStateChanged;
   FSupervisor.OnTerminate := SupervisorTerminated;
-  FSupervisor.RequestStart(sbConfig.JSON);
+  FSupervisor.RequestStart(sbConfig.jsonWithoutTun);
 end;
 
 destructor TDrover.Destroy;
@@ -202,6 +205,28 @@ begin
   end;
 end;
 
+procedure TDrover.removeTunInbounds(rootObj: TJSONObject);
+var
+  i: integer;
+  inboundsArr: TJSONArray;
+  inboundVal: TJSONValue;
+  inboundObj: TJSONObject;
+  inboundType: string;
+begin
+  if not rootObj.TryGetValue('inbounds', inboundsArr) then
+    exit;
+
+  for i := inboundsArr.Count - 1 downto 0 do
+  begin
+    inboundVal := inboundsArr.Items[i];
+    if not(inboundVal is TJSONObject) then
+      continue;
+    inboundObj := inboundVal as TJSONObject;
+    if inboundObj.TryGetValue('type', inboundType) and SameText(inboundType, 'tun') then
+      inboundsArr.Remove(i).Free;
+  end;
+end;
+
 function TDrover.ReadSingBoxConfig(configPath: string): TSingBoxConfig;
 var
   jsonText: string;
@@ -215,6 +240,7 @@ var
   sel: TConfigSelector;
   outboundsArr: TJSONArray;
   list: TList<TConfigSelector>;
+  inboundType: string;
 
   function getStr(const obj: TJSONObject; const name: string; const ADefault: string = ''): string;
   begin
@@ -248,11 +274,16 @@ begin
           continue;
         itemObj := itemVal as TJSONObject;
 
-        if SameText(getStr(itemObj, 'type'), 'mixed') then
+        inboundType := getStr(itemObj, 'type');
+
+        if SameText(inboundType, 'mixed') then
         begin
           result.proxyHost := getStr(itemObj, 'listen');
           result.proxyPort := StrToIntDef(getStr(itemObj, 'listen_port'), 0);
         end;
+
+        if SameText(inboundType, 'tun') then
+          result.hasTunInbound := true;
       end;
     end;
 
@@ -307,7 +338,17 @@ begin
       obj.TryGetValue('secret', result.clashApiSecret);
     end;
 
-    result.JSON := jsonText;
+    result.jsonWithTun := rootObj.ToString;
+
+    if result.hasTunInbound then
+    begin
+      removeTunInbounds(rootObj);
+      result.jsonWithoutTun := rootObj.ToString;
+    end
+    else
+    begin
+      result.jsonWithoutTun := result.jsonWithTun;
+    end;
   finally
     rootValue.Free;
   end;
