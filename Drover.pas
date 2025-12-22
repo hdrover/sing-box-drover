@@ -37,7 +37,7 @@ type
     jsonWithoutTun: string;
   end;
 
-  TDroverEventKind = (dekError);
+  TDroverEventKind = (dekError, dekRunning);
 
   TDroverEvent = record
     kind: TDroverEventKind;
@@ -57,15 +57,15 @@ type
     FDestroying: boolean;
     FPendingEvents: TList<TDroverEvent>;
     FIsAdmin: boolean;
+    FIsTunActive: boolean;
 
     procedure SupervisorStateChanged(state: TCoreState; msg: string);
     procedure SupervisorTerminated(sender: TObject);
     procedure PostCanClose;
-    procedure NotifyEvent(kind: TDroverEventKind; msg: string);
+    procedure NotifyEvent(kind: TDroverEventKind; msg: string = '');
     procedure SetOnEvent(value: TDroverEventHandler);
     procedure FlushPendingEvents;
     procedure RemoveTunInbounds(rootObj: TJSONObject);
-    procedure StartCore(useTun: boolean);
     function CheckIsAdmin: boolean;
   public
     sbConfig: TSingBoxConfig;
@@ -84,11 +84,13 @@ type
     function EnableSystemProxy: boolean;
     function DisableSystemProxy: boolean;
     function Shutdown: boolean;
+    procedure StartCore(useTun: boolean);
 
     property Options: TDroverOptions read FOptions;
     property OnEvent: TDroverEventHandler read FOnEvent write SetOnEvent;
     property NotifyHandle: HWND read FNotifyHandle write FNotifyHandle;
     property IsAdmin: boolean read FIsAdmin;
+    property IsTunActive: boolean read FIsTunActive;
   end;
 
   TSelectorThread = class(TThread)
@@ -161,6 +163,8 @@ procedure TDrover.StartCore(useTun: boolean);
 var
   configJson: string;
 begin
+  FIsTunActive := useTun;
+
   if useTun then
     configJson := sbConfig.jsonWithTun
   else
@@ -192,7 +196,7 @@ begin
     FlushPendingEvents;
 end;
 
-procedure TDrover.NotifyEvent(kind: TDroverEventKind; msg: string);
+procedure TDrover.NotifyEvent(kind: TDroverEventKind; msg: string = '');
 var
   ev: TDroverEvent;
 begin
@@ -221,7 +225,10 @@ begin
 
   case state of
     csRunning:
-      ResetSelectors;
+      begin
+        ResetSelectors;
+        NotifyEvent(dekRunning, '');
+      end;
 
     csFailed:
       NotifyEvent(dekError, msg);

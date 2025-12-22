@@ -22,6 +22,11 @@ object frmMain: TfrmMain
     OnPopup = PopupMenuPopup
     Left = 248
     Top = 40
+    object miTun: TMenuItem
+      Caption = 'TUN mode'
+      Visible = False
+      OnClick = miTunClick
+    end
     object miSystemProxy: TMenuItem
       Caption = 'System proxy'
       OnClick = miSystemProxyClick

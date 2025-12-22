@@ -350,8 +350,12 @@ begin
     exit(false);
   try
     SetConsoleCtrlHandler(nil, true);
-    result := GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0);
-    sleep(10);
+    try
+      result := GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0);
+      sleep(10);
+    finally
+      SetConsoleCtrlHandler(nil, false);
+    end;
   finally
     FreeConsole;
   end;

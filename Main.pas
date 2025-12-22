@@ -13,6 +13,7 @@ type
     miQuit: TMenuItem;
     miSystemProxy: TMenuItem;
     miBeforeSelectors: TMenuItem;
+    miTun: TMenuItem;
     procedure FormCloseQuery(Sender: TObject; var CanClose: boolean);
     procedure miQuitClick(Sender: TObject);
     procedure PopupMenuPopup(Sender: TObject);
@@ -23,6 +24,7 @@ type
     procedure ToggleSystemProxyIcon(enable: boolean);
     procedure ToggleSystemProxy(enable: boolean);
     procedure FormCreate(Sender: TObject);
+    procedure miTunClick(Sender: TObject);
   private
     TrayIcon: TTrayIcon;
     FDrover: TDrover;
@@ -58,6 +60,11 @@ end;
 procedure TfrmMain.InitDrover(ADrover: TDrover);
 begin
   FDrover := ADrover;
+
+  miTun.Enabled := false;
+  miTun.Checked := FDrover.IsTunActive;
+  miTun.Visible := FDrover.sbConfig.hasTunInbound;
+
   FDrover.NotifyHandle := Handle;
   FDrover.OnEvent := HandleDroverEvent;
 
@@ -74,6 +81,12 @@ begin
   case event.kind of
     dekError:
       ShowBalloon(event.msg, '', bfError);
+
+    dekRunning:
+      begin
+        miTun.Checked := FDrover.IsTunActive;
+        miTun.Enabled := FDrover.IsAdmin;
+      end;
   end;
 end;
 
@@ -232,6 +245,13 @@ end;
 procedure TfrmMain.miSystemProxyClick(Sender: TObject);
 begin
   ToggleSystemProxy(not miSystemProxy.Checked);
+end;
+
+procedure TfrmMain.miTunClick(Sender: TObject);
+begin
+  miTun.Checked := not miTun.Checked;
+  miTun.Enabled := false;
+  FDrover.StartCore(miTun.Checked);
 end;
 
 procedure TfrmMain.PopupMenuPopup(Sender: TObject);
