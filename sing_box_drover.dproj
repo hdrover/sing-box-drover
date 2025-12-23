@@ -153,6 +153,10 @@
             <ResourceType>ICON</ResourceType>
             <ResourceId>TRAY_ICON_DISABLED</ResourceId>
         </RcItem>
+        <RcItem Include="icon_tun.ico">
+            <ResourceType>ICON</ResourceType>
+            <ResourceId>TRAY_ICON_TUN</ResourceId>
+        </RcItem>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>
@@ -228,6 +232,12 @@
                     </Platform>
                 </DeployFile>
                 <DeployFile LocalName="icon_disabled.ico" Configuration="Release" Class="ProjectFile">
+                    <Platform Name="Win64">
+                        <RemoteDir>.\</RemoteDir>
+                        <Overwrite>true</Overwrite>
+                    </Platform>
+                </DeployFile>
+                <DeployFile LocalName="icon_tun.ico" Configuration="Release" Class="ProjectFile">
                     <Platform Name="Win64">
                         <RemoteDir>.\</RemoteDir>
                         <Overwrite>true</Overwrite>

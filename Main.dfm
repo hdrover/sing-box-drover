@@ -19,7 +19,6 @@ object frmMain: TfrmMain
   PixelsPerInch = 192
   TextHeight = 32
   object PopupMenu: TPopupMenu
-    OnPopup = PopupMenuPopup
     Left = 248
     Top = 40
     object miTun: TMenuItem

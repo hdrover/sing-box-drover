@@ -16,24 +16,27 @@ type
     miTun: TMenuItem;
     procedure FormCloseQuery(Sender: TObject; var CanClose: boolean);
     procedure miQuitClick(Sender: TObject);
-    procedure PopupMenuPopup(Sender: TObject);
     procedure miSystemProxyClick(Sender: TObject);
     procedure TrayIconClick(Sender: TObject);
     procedure miSelectorClick(Sender: TObject);
     procedure DrawSelectors;
-    procedure ToggleSystemProxyIcon(enable: boolean);
-    procedure ToggleSystemProxy(enable: boolean);
     procedure FormCreate(Sender: TObject);
     procedure miTunClick(Sender: TObject);
   private
     TrayIcon: TTrayIcon;
     FDrover: TDrover;
-    isSystemProxyEnabled: boolean;
+    FIsTunActive: boolean;
+    FIsSystemProxyActive: boolean;
     FClosePending: boolean;
 
+    procedure UpdateTrayIcon;
+    procedure ToggleSystemProxy(AEnable: boolean; AUpdateTrayIcon: boolean = true);
+    procedure ToggleTunDisplay(AActive: boolean; AUpdateTrayIcon: boolean = true);
+    procedure ToggleTun(AEnable: boolean);
     procedure HandleDroverEvent(event: TDroverEvent);
     procedure WMDroverCanClose(var msg: TMessage); message WM_DROVER_CAN_CLOSE;
     procedure ShowBalloon(AText, ATitle: string; AFlags: TBalloonFlags = bfInfo; ATimeout: integer = 10000);
+    procedure ShowOnlyExitInTray;
   public
 
     procedure InitDrover(ADrover: TDrover);
@@ -48,32 +51,36 @@ implementation
 
 procedure TfrmMain.FormCreate(Sender: TObject);
 begin
+  FIsTunActive := false;
+  FIsSystemProxyActive := false;
   FClosePending := false;
-  isSystemProxyEnabled := false;
+
+  miTun.Enabled := false;
+  miTun.Visible := false;
 
   TrayIcon := TTrayIcon.Create(self);
   TrayIcon.PopupMenu := PopupMenu;
   TrayIcon.OnClick := TrayIconClick;
-  TrayIcon.Visible := true;
 end;
 
 procedure TfrmMain.InitDrover(ADrover: TDrover);
 begin
   FDrover := ADrover;
-
-  miTun.Enabled := false;
-  miTun.Checked := FDrover.IsTunActive;
-  miTun.Visible := FDrover.sbConfig.hasTunInbound;
-
   FDrover.NotifyHandle := Handle;
-  FDrover.OnEvent := HandleDroverEvent;
 
   DrawSelectors;
 
+  miTun.Visible := FDrover.sbConfig.hasTunInbound;
+  ToggleTunDisplay(FDrover.IsTunActive, false);
+
   if FDrover.Options.systemProxyAuto then
-    ToggleSystemProxy(true)
-  else
-    ToggleSystemProxyIcon(false);
+    ToggleSystemProxy(true, false);
+
+  UpdateTrayIcon;
+
+  TrayIcon.Visible := true;
+
+  FDrover.OnEvent := HandleDroverEvent;
 end;
 
 procedure TfrmMain.HandleDroverEvent(event: TDroverEvent);
@@ -84,7 +91,7 @@ begin
 
     dekRunning:
       begin
-        miTun.Checked := FDrover.IsTunActive;
+        ToggleTunDisplay(FDrover.IsTunActive);
         miTun.Enabled := FDrover.IsAdmin;
       end;
   end;
@@ -186,28 +193,60 @@ begin
   end;
 end;
 
-procedure TfrmMain.ToggleSystemProxyIcon(enable: boolean);
+procedure TfrmMain.UpdateTrayIcon;
 var
   s: string;
 begin
-  if enable then
-    s := 'TRAY_ICON'
+  if FIsTunActive then
+  begin
+    s := 'TRAY_ICON_TUN';
+  end
   else
-    s := 'TRAY_ICON_DISABLED';
+  begin
+    if FIsSystemProxyActive then
+      s := 'TRAY_ICON'
+    else
+      s := 'TRAY_ICON_DISABLED';
+  end;
+
   TrayIcon.Icon.LoadFromResourceName(HInstance, s);
   TrayIcon.Icon := TrayIcon.Icon;
 end;
 
-procedure TfrmMain.ToggleSystemProxy(enable: boolean);
+procedure TfrmMain.ToggleSystemProxy(AEnable: boolean; AUpdateTrayIcon: boolean = true);
 begin
-  isSystemProxyEnabled := enable;
+  if AEnable and FClosePending then
+    exit;
 
-  if enable then
+  FIsSystemProxyActive := AEnable;
+  miSystemProxy.Checked := AEnable;
+
+  if AEnable then
     FDrover.EnableSystemProxy
   else
     FDrover.DisableSystemProxy;
 
-  ToggleSystemProxyIcon(enable);
+  if AUpdateTrayIcon then
+    UpdateTrayIcon;
+end;
+
+procedure TfrmMain.ToggleTunDisplay(AActive: boolean; AUpdateTrayIcon: boolean = true);
+begin
+  FIsTunActive := AActive;
+  miTun.Checked := AActive;
+
+  if AUpdateTrayIcon then
+    UpdateTrayIcon;
+end;
+
+procedure TfrmMain.ToggleTun(AEnable: boolean);
+begin
+  if AEnable and FClosePending then
+    exit;
+
+  ToggleTunDisplay(AEnable);
+  miTun.Enabled := false;
+  FDrover.StartCore(miTun.Checked);
 end;
 
 procedure TfrmMain.FormCloseQuery(Sender: TObject; var CanClose: boolean);
@@ -218,22 +257,25 @@ begin
     exit;
   end;
 
+  FClosePending := true;
+  ShowOnlyExitInTray;
+
+  ToggleTunDisplay(false, false);
+
   if FDrover.Options.systemProxyAuto then
-    ToggleSystemProxy(false);
+    ToggleSystemProxy(false, false);
+
+  UpdateTrayIcon;
 
   CanClose := FDrover.Shutdown;
-
-  if not CanClose then
-  begin
-    FClosePending := true;
-  end;
 end;
 
 procedure TfrmMain.WMDroverCanClose(var msg: TMessage);
 begin
   if not FClosePending then
     exit;
-  FClosePending := false;
+
+  EndMenu;
   PostMessage(Handle, WM_CLOSE, 0, 0);
 end;
 
@@ -249,19 +291,12 @@ end;
 
 procedure TfrmMain.miTunClick(Sender: TObject);
 begin
-  miTun.Checked := not miTun.Checked;
-  miTun.Enabled := false;
-  FDrover.StartCore(miTun.Checked);
-end;
-
-procedure TfrmMain.PopupMenuPopup(Sender: TObject);
-begin
-  miSystemProxy.Checked := isSystemProxyEnabled;
+  ToggleTun(not miTun.Checked);
 end;
 
 procedure TfrmMain.TrayIconClick(Sender: TObject);
 begin
-  ToggleSystemProxy(not isSystemProxyEnabled);
+  ToggleSystemProxy(not FIsSystemProxyActive);
 end;
 
 procedure TfrmMain.miSelectorClick(Sender: TObject);
@@ -294,6 +329,12 @@ begin
   item.Checked := true;
 
   FDrover.EditSelector(selector.name, outboundName);
+end;
+
+procedure TfrmMain.ShowOnlyExitInTray;
+begin
+  for var item in PopupMenu.Items do
+    item.Visible := (item = miQuit);
 end;
 
 end.
