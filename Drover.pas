@@ -66,6 +66,7 @@ type
     procedure SetOnEvent(value: TDroverEventHandler);
     procedure FlushPendingEvents;
     procedure RemoveTunInbounds(rootObj: TJSONObject);
+    procedure CreateDefaultClashApi(rootObj: TJSONObject; var config: TSingBoxConfig);
     function CheckIsAdmin: boolean;
   public
     sbConfig: TSingBoxConfig;
@@ -277,6 +278,39 @@ begin
   end;
 end;
 
+procedure TDrover.CreateDefaultClashApi(rootObj: TJSONObject; var config: TSingBoxConfig);
+var
+  controller, secret: string;
+  experimentalObj, clashApiObj: TJSONObject;
+  val: TJSONValue;
+begin
+  if rootObj.TryGetValue('experimental', val) then
+  begin
+    if not(val is TJSONObject) then
+      exit;
+    experimentalObj := val as TJSONObject;
+  end
+  else
+  begin
+    experimentalObj := TJSONObject.Create;
+    rootObj.AddPair('experimental', experimentalObj);
+  end;
+
+  if experimentalObj.TryGetValue('clash_api', val) then
+    exit;
+
+  controller := '127.0.0.1:9090';
+  secret := TGUID.NewGuid.ToString;
+
+  clashApiObj := TJSONObject.Create;
+  clashApiObj.AddPair('external_controller', controller);
+  clashApiObj.AddPair('secret', secret);
+  experimentalObj.AddPair('clash_api', clashApiObj);
+
+  config.clashApiExternalController := controller;
+  config.clashApiSecret := secret;
+end;
+
 function TDrover.ReadSingBoxConfig(configPath: string): TSingBoxConfig;
 var
   jsonText: string;
@@ -386,6 +420,10 @@ begin
     begin
       obj.TryGetValue('external_controller', result.clashApiExternalController);
       obj.TryGetValue('secret', result.clashApiSecret);
+    end
+    else if Length(result.selectors) > 0 then
+    begin
+      CreateDefaultClashApi(rootObj, result);
     end;
 
     result.jsonWithTun := rootObj.ToString;
