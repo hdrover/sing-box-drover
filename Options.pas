@@ -5,6 +5,7 @@ interface
 uses
   Windows,
   System.SysUtils,
+  System.StrUtils,
   IniFiles;
 
 const
@@ -12,19 +13,33 @@ const
   SECTION_MAIN = 'sing-box-drover';
 
 type
+  TTunStartMode = (tsmOn, tsmOff);
+
   TDroverOptions = record
     sbDir: string;
     sbConfigFile: string;
     systemProxyAuto: boolean;
+    tunStartMode: TTunStartMode;
     selectorMenuLayout: string;
     logFile: string;
-  end;
 
-function LoadOptions(filename: string): TDroverOptions;
+    class function Load(filename: string): TDroverOptions; static;
+  private
+    class function ParseTunStartMode(s: string): TTunStartMode; static;
+  end;
 
 implementation
 
-function LoadOptions(filename: string): TDroverOptions;
+class function TDroverOptions.ParseTunStartMode(s: string): TTunStartMode;
+begin
+  s := Trim(LowerCase(s));
+  if MatchStr(s, ['off', '0']) then
+    exit(TTunStartMode.tsmOff)
+  else
+    exit(TTunStartMode.tsmOn);
+end;
+
+class function TDroverOptions.Load(filename: string): TDroverOptions;
 var
   s, path, currentDir: string;
   f: TIniFile;
@@ -59,6 +74,7 @@ begin
         end;
         result.sbConfigFile := s;
 
+        result.tunStartMode := ParseTunStartMode(ReadString(SECTION_MAIN, 'tun-start-mode', ''));
         result.systemProxyAuto := ReadBool(SECTION_MAIN, 'system-proxy-auto', false);
         result.selectorMenuLayout := ReadString(SECTION_MAIN, 'selector-menu-layout', '');
 

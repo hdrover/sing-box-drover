@@ -85,6 +85,7 @@ type
     function DisableSystemProxy: boolean;
     function Shutdown: boolean;
     procedure StartCore(useTun: boolean);
+    function CanUseTun: boolean;
 
     property Options: TDroverOptions read FOptions;
     property OnEvent: TDroverEventHandler read FOnEvent write SetOnEvent;
@@ -114,7 +115,7 @@ begin
 
   currentProcessDir := IncludeTrailingPathDelimiter(ExtractFilePath(ParamStr(0)));
 
-  FOptions := LoadOptions(currentProcessDir + OPTIONS_FILENAME);
+  FOptions := TDroverOptions.Load(currentProcessDir + OPTIONS_FILENAME);
 
   FLogger := TLogger.Create(FOptions.logFile);
 
@@ -130,7 +131,7 @@ begin
   FSupervisor := TCoreSupervisor.Create(corePath, FLogger);
   FSupervisor.OnStateChanged := SupervisorStateChanged;
   FSupervisor.OnTerminate := SupervisorTerminated;
-  StartCore(IsAdmin);
+  StartCore(CanUseTun and (FOptions.tunStartMode = tsmOn));
 end;
 
 destructor TDrover.Destroy;
@@ -163,6 +164,9 @@ procedure TDrover.StartCore(useTun: boolean);
 var
   configJson: string;
 begin
+  if not CanUseTun then
+    useTun := false;
+
   FIsTunActive := useTun;
 
   if useTun then
@@ -171,6 +175,11 @@ begin
     configJson := sbConfig.jsonWithoutTun;
 
   FSupervisor.RequestStart(configJson);
+end;
+
+function TDrover.CanUseTun: boolean;
+begin
+  result := sbConfig.hasTunInbound and IsAdmin;
 end;
 
 function TDrover.CheckIsAdmin: boolean;
