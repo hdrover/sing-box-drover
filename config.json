@@ -5,6 +5,22 @@
       "tag": "mixed-in",
       "listen": "127.0.0.1",
       "listen_port": 1080
+    },
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "address": [
+        "172.19.0.1/30",
+        "fdfe:dcba:9876::1/126"
+      ],
+      "auto_route": true,
+      "stack": "system",
+      "mtu": 1400,
+      "route_exclude_address": [
+        "192.168.0.0/16",
+        "224.0.0.0/4",
+        "255.255.255.255/32"
+      ]
     }
   ],
   "outbounds": [
