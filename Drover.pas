@@ -6,7 +6,7 @@ uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes,
   Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.ExtCtrls, Vcl.Menus, SystemProxy, System.Net.HttpClient,
   System.Net.URLClient, System.JSON, System.IOUtils, System.Generics.Collections, Options, JsonUtils,
-  CoreSupervisor, Logger;
+  CoreSupervisor, Logger, AppElevation, AppArgs;
 
 const
   WM_DROVER_CAN_CLOSE = WM_APP + 501;
@@ -56,7 +56,7 @@ type
     FShutdownComplete: boolean;
     FDestroying: boolean;
     FPendingEvents: TList<TDroverEvent>;
-    FIsAdmin: boolean;
+    FIsElevated: boolean;
     FIsTunActive: boolean;
 
     procedure SupervisorStateChanged(state: TCoreState; msg: string);
@@ -67,13 +67,12 @@ type
     procedure FlushPendingEvents;
     procedure RemoveTunInbounds(rootObj: TJSONObject);
     procedure CreateDefaultClashApi(rootObj: TJSONObject; var config: TSingBoxConfig);
-    function CheckIsAdmin: boolean;
   public
     sbConfig: TSingBoxConfig;
     FOptions: TDroverOptions;
     currentProcessDir: string;
 
-    constructor Create;
+    constructor Create(AFlags: TAppFlags);
     destructor Destroy; override;
 
     function ReadSingBoxConfig(configPath: string): TSingBoxConfig;
@@ -91,7 +90,7 @@ type
     property Options: TDroverOptions read FOptions;
     property OnEvent: TDroverEventHandler read FOnEvent write SetOnEvent;
     property NotifyHandle: HWND read FNotifyHandle write FNotifyHandle;
-    property IsAdmin: boolean read FIsAdmin;
+    property IsElevated: boolean read FIsElevated;
     property IsTunActive: boolean read FIsTunActive;
   end;
 
@@ -108,7 +107,7 @@ type
 
 implementation
 
-constructor TDrover.Create;
+constructor TDrover.Create(AFlags: TAppFlags);
 var
   corePath: string;
 begin
@@ -123,7 +122,7 @@ begin
   sbConfig := ReadSingBoxConfig(FOptions.sbConfigFile);
   CheckSingBoxConfig(sbConfig);
 
-  FIsAdmin := CheckIsAdmin;
+  FIsElevated := AppElevation.IsProcessElevated;
 
   corePath := FOptions.sbDir + 'sing-box.exe';
   if not TFile.Exists(corePath) then
@@ -132,7 +131,7 @@ begin
   FSupervisor := TCoreSupervisor.Create(corePath, FLogger);
   FSupervisor.OnStateChanged := SupervisorStateChanged;
   FSupervisor.OnTerminate := SupervisorTerminated;
-  StartCore(CanUseTun and (FOptions.tunStartMode = tsmOn));
+  StartCore(CanUseTun and ((FOptions.tunStartMode = tsmOn) or (afTun in AFlags)));
 end;
 
 destructor TDrover.Destroy;
@@ -180,23 +179,7 @@ end;
 
 function TDrover.CanUseTun: boolean;
 begin
-  result := sbConfig.hasTunInbound and IsAdmin;
-end;
-
-function TDrover.CheckIsAdmin: boolean;
-var
-  tokenHandle: THandle;
-  elevation: TOKEN_ELEVATION;
-  returnLength: DWORD;
-begin
-  result := false;
-  if OpenProcessToken(GetCurrentProcess, TOKEN_QUERY, tokenHandle) then
-    try
-      if GetTokenInformation(tokenHandle, TokenElevation, @elevation, SizeOf(elevation), returnLength) then
-        result := elevation.TokenIsElevated <> 0;
-    finally
-      CloseHandle(tokenHandle);
-    end;
+  result := sbConfig.hasTunInbound and FIsElevated;
 end;
 
 procedure TDrover.SetOnEvent(value: TDroverEventHandler);

@@ -33,7 +33,7 @@ implementation
 class function TDroverOptions.ParseTunStartMode(s: string): TTunStartMode;
 begin
   s := Trim(LowerCase(s));
-  if MatchStr(s, ['off', '0']) then
+  if MatchStr(s, ['off', '0', '']) then
     exit(TTunStartMode.tsmOff)
   else
     exit(TTunStartMode.tsmOn);

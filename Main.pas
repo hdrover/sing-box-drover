@@ -5,7 +5,8 @@ interface
 uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes, Vcl.Graphics,
   Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.ExtCtrls, Vcl.Menus, System.Net.HttpClient,
-  System.Net.URLClient, System.JSON, System.IOUtils, System.Generics.Collections, Options, Drover;
+  System.Net.URLClient, System.JSON, System.IOUtils, System.Generics.Collections, Options, Drover,
+  AppElevation, AppArgs;
 
 type
   TfrmMain = class(TForm)
@@ -92,7 +93,7 @@ begin
     dekRunning:
       begin
         ToggleTunDisplay(FDrover.IsTunActive);
-        miTun.Enabled := FDrover.IsAdmin;
+        miTun.Enabled := true;
       end;
   end;
 end;
@@ -243,6 +244,13 @@ procedure TfrmMain.ToggleTun(AEnable: boolean);
 begin
   if AEnable and FClosePending then
     exit;
+
+  if not FDrover.IsElevated then
+  begin
+    if RunAsAdminSelf(FlagsToCmdLine([afTun, afElevatedRestart]), Handle) then
+      Close;
+    exit;
+  end;
 
   ToggleTunDisplay(AEnable);
   miTun.Enabled := false;

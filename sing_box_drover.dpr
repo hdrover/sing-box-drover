@@ -13,36 +13,29 @@ uses
   Options in 'Options.pas',
   JsonUtils in 'JsonUtils.pas',
   CoreSupervisor in 'CoreSupervisor.pas',
-  Logger in 'Logger.pas';
+  Logger in 'Logger.pas',
+  AppArgs in 'AppArgs.pas',
+  AppElevation in 'AppElevation.pas',
+  AppSingleInstance in 'AppSingleInstance.pas';
 
 {$R *.res}
 
 const
   APP_TITLE = 'sing-box-drover';
 
-function IsSingleInstance: Boolean;
-var
-  hMutex: THandle;
-begin
-  result := false;
-  hMutex := CreateMutex(nil, true, 'SingBoxDrover_SingleInstance_Mutex');
-  if hMutex = 0 then
-    exit;
-  if (GetLastError = ERROR_ALREADY_EXISTS) or (GetLastError = ERROR_ACCESS_DENIED) then
-    exit;
-  result := true;
-end;
-
 var
   Drover: TDrover;
+  flags: TAppFlags;
   s: string;
 
 begin
   try
-    if not IsSingleInstance then
+    flags := ParseAppFlags;
+
+    if not AcquireSingleInstance('SingBoxDrover_SingleInstance_Mutex', afElevatedRestart in flags) then
       raise Exception.Create('Another instance of this application is already running.');
 
-    Drover := TDrover.Create;
+    Drover := TDrover.Create(flags);
   except
     on E: Exception do
     begin
