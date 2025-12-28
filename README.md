@@ -1,12 +1,12 @@
-# sing-box-drover (Tray controller for sing-box on Windows)
+# sing-box-drover (tray controller for sing-box on Windows)
 
-sing-box-drover is a small helper program for Windows that runs the original `sing-box` in the background and provides
+sing-box-drover is a lightweight utility for Windows that runs the original `sing-box` in the background and provides
 minimal, convenient control from the system tray:
 
-- tray icon reflects the current mode: idle, system proxy enabled, or TUN active
-- click on the tray icon to toggle system proxy
-- TUN mode toggling via context menu (requests elevation if needed)
-- outbound selector switching via context menu
+- Tray icon reflects the current mode: idle, system proxy enabled, or TUN active
+- Click on the tray icon to toggle system proxy
+- Toggle TUN mode via context menu (requests elevation if needed)
+- Switch outbound selectors via context menu
 
 The goal is to keep the full power of a native `sing-box` config while adding just enough integration with Windows,
 without turning into another heavy all-in-one client.
