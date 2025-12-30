@@ -305,15 +305,14 @@ begin
     if not AssignProcessToJobObject(jobHandle, processHandle) then
       raise Exception.Create('AssignProcessToJobObject failed.');
 
-    configBytes := TEncoding.UTF8.GetBytes(configJson);
-    WriteAllToHandle(stdinWritePipe, configBytes);
-
-    SafeCloseHandle(stdinWritePipe);
-
     resumeResult := ResumeThread(threadHandle);
     SafeCloseHandle(threadHandle);
     if resumeResult = DWORD(-1) then
       raise Exception.Create('ResumeThread failed.');
+
+    configBytes := TEncoding.UTF8.GetBytes(configJson);
+    WriteAllToHandle(stdinWritePipe, configBytes);
+    SafeCloseHandle(stdinWritePipe);
 
     FJobHandle := jobHandle;
     FProcessHandle := processHandle;
