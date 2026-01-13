@@ -304,7 +304,8 @@ end;
 
 procedure TfrmMain.TrayIconClick(Sender: TObject);
 begin
-  ToggleSystemProxy(not FIsSystemProxyActive);
+  if not FIsTunActive then
+    ToggleSystemProxy(not FIsSystemProxyActive);
 end;
 
 procedure TfrmMain.miSelectorClick(Sender: TObject);
