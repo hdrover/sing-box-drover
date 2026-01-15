@@ -120,7 +120,7 @@ var
   isNested: boolean;
   itemOwner: TComponent;
 begin
-  selectors := FDrover.sbConfig.selectors;
+  selectors := FDrover.selectors;
   selectorCount := Length(selectors);
   if (selectorCount < 1) or (selectorCount > 50) then
     exit;
@@ -161,7 +161,7 @@ begin
       outboundItem.RadioItem := true;
       outboundItem.OnClick := miSelectorClick;
       outboundItem.Tag := selectorI * 1000 + outboundI;
-      outboundItem.Checked := (outboundI = selector.default);
+      outboundItem.Checked := (outboundI = selector.defaultIndex);
       outboundItem.GroupIndex := selectorI + 10;
 
       if isNested then
@@ -310,12 +310,9 @@ end;
 
 procedure TfrmMain.miSelectorClick(Sender: TObject);
 var
-  selectors: TConfigSelectors;
   item: TMenuItem;
   i: integer;
   selectorI, outboundI: integer;
-  selector: TConfigSelector;
-  outboundName: string;
 begin
   if not(Sender is TMenuItem) then
     exit;
@@ -326,18 +323,9 @@ begin
   selectorI := i div 1000;
   outboundI := i mod 1000;
 
-  selectors := FDrover.sbConfig.selectors;
-
-  if (selectorI < Low(selectors)) or (selectorI > High(selectors)) then
-    exit;
-  selector := selectors[selectorI];
-  if (outboundI < Low(selector.outbounds)) or (outboundI > High(selector.outbounds)) then
-    exit;
-  outboundName := selector.outbounds[outboundI];
-
   item.Checked := true;
 
-  FDrover.EditSelector(selector.name, outboundName);
+  FDrover.EditSelector(selectorI, outboundI);
 end;
 
 procedure TfrmMain.ShowOnlyExitInTray;

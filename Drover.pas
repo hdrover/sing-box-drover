@@ -33,6 +33,7 @@ type
     FPendingEvents: TList<TDroverEvent>;
     FIsElevated: boolean;
     FIsTunActive: boolean;
+    FSelectors: TConfigSelectors;
 
     procedure HandleCoreEvent(event: TCoreEvent);
     procedure SupervisorTerminated(sender: TObject);
@@ -53,7 +54,7 @@ type
     function ReadSingBoxConfig(configPath: string): TSingBoxConfig;
     procedure CheckSingBoxConfig(cfg: TSingBoxConfig);
     procedure ResetSelectors;
-    procedure EditSelector(name, value: string);
+    procedure EditSelector(selectorIdx, outboundIdx: integer);
     function EnableSystemProxy: boolean;
     function DisableSystemProxy: boolean;
     function Shutdown: boolean;
@@ -65,6 +66,7 @@ type
     property NotifyHandle: HWND read FNotifyHandle write FNotifyHandle;
     property IsElevated: boolean read FIsElevated;
     property IsTunActive: boolean read FIsTunActive;
+    property Selectors: TConfigSelectors read FSelectors;
   end;
 
 implementation
@@ -83,6 +85,7 @@ begin
 
   sbConfig := ReadSingBoxConfig(FOptions.sbConfigFile);
   CheckSingBoxConfig(sbConfig);
+  FSelectors := sbConfig.Selectors;
 
   FIsElevated := AppElevation.IsProcessElevated;
 
@@ -277,7 +280,7 @@ var
   itemObj, obj: TJSONObject;
   sel: TConfigSelector;
   outboundsArr: TJSONArray;
-  list: TList<TConfigSelector>;
+  selectorList: TList<TConfigSelector>;
   inboundType: string;
 
   function getStr(const obj: TJSONObject; const name: string; const ADefault: string = ''): string;
@@ -327,7 +330,7 @@ begin
 
     if rootObj.TryGetValue('outbounds', itemsArr) then
     begin
-      list := TList<TConfigSelector>.Create;
+      selectorList := TList<TConfigSelector>.Create;
       try
         for itemVal in itemsArr do
         begin
@@ -339,7 +342,7 @@ begin
           begin
             sel.name := getStr(itemObj, 'tag');
             sel.defaultName := getStr(itemObj, 'default');
-            sel.default := -1;
+            sel.defaultIndex := -1;
 
             if itemObj.TryGetValue('outbounds', outboundsArr) then
             begin
@@ -349,7 +352,7 @@ begin
                 outboundName := outboundsArr.Items[outboundI].value;
                 sel.outbounds[outboundI] := outboundName;
                 if sel.defaultName = outboundName then
-                  sel.default := outboundI;
+                  sel.defaultIndex := outboundI;
               end;
             end
             else
@@ -358,13 +361,13 @@ begin
             end;
 
             if Length(sel.outbounds) > 0 then
-              list.Add(sel);
+              selectorList.Add(sel);
           end;
         end;
 
-        result.selectors := list.ToArray;
+        result.Selectors := selectorList.ToArray;
       finally
-        list.Free;
+        selectorList.Free;
       end;
     end;
 
@@ -375,7 +378,7 @@ begin
       obj.TryGetValue('external_controller', result.clashApi.externalController);
       obj.TryGetValue('secret', result.clashApi.secret);
     end
-    else if Length(result.selectors) > 0 then
+    else if Length(result.Selectors) > 0 then
     begin
       CreateDefaultClashApi(rootObj, result);
     end;
@@ -406,27 +409,22 @@ procedure TDrover.ResetSelectors;
 var
   selector: TConfigSelector;
   outboundI: integer;
-  outboundName: string;
   task: TSelectorTask;
   tasks: TSelectorTasks;
   taskI: integer;
 begin
-  SetLength(tasks, Length(sbConfig.selectors));
+  SetLength(tasks, Length(FSelectors));
   taskI := 0;
 
-  for selector in sbConfig.selectors do
+  for selector in FSelectors do
   begin
-    for outboundI := Low(selector.outbounds) to High(selector.outbounds) do
+    outboundI := selector.defaultIndex;
+    if (outboundI >= Low(selector.outbounds)) and (outboundI <= High(selector.outbounds)) then
     begin
-      outboundName := selector.outbounds[outboundI];
-
-      if (outboundI = selector.default) then
-      begin
-        task.name := selector.name;
-        task.value := outboundName;
-        tasks[taskI] := task;
-        inc(taskI);
-      end;
+      task.name := selector.name;
+      task.value := selector.outbounds[outboundI];
+      tasks[taskI] := task;
+      inc(taskI);
     end;
   end;
 
@@ -438,12 +436,23 @@ begin
   FSupervisor.RequestSetSelectors(tasks);
 end;
 
-procedure TDrover.EditSelector(name, value: string);
+procedure TDrover.EditSelector(selectorIdx, outboundIdx: integer);
 var
+  selector: TConfigSelector;
   task: TSelectorTask;
 begin
-  task.name := name;
-  task.value := value;
+  if (selectorIdx < Low(FSelectors)) or (selectorIdx > High(FSelectors)) then
+    exit;
+
+  selector := FSelectors[selectorIdx];
+  if (outboundIdx < Low(selector.outbounds)) or (outboundIdx > High(selector.outbounds)) then
+    exit;
+
+  FSelectors[selectorIdx].defaultIndex := outboundIdx;
+
+  task.name := selector.name;
+  task.value := selector.outbounds[outboundIdx];
+
   FSupervisor.RequestSetSelectors([task]);
 end;
 

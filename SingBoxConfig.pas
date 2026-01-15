@@ -6,7 +6,7 @@ type
   TConfigSelector = record
     name: string;
     outbounds: TArray<string>;
-    default: integer;
+    defaultIndex: integer;
     defaultName: string;
   end;
 
