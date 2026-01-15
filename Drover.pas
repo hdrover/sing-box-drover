@@ -4,39 +4,14 @@ interface
 
 uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes,
-  Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.ExtCtrls, Vcl.Menus, SystemProxy, System.Net.HttpClient,
-  System.Net.URLClient, System.JSON, System.IOUtils, System.Generics.Collections, Options, JsonUtils,
-  CoreSupervisor, Logger, AppElevation, AppArgs;
+  Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.ExtCtrls, Vcl.Menus, SystemProxy,
+  System.JSON, System.IOUtils, System.Generics.Collections, Options, JsonUtils,
+  CoreSupervisor, Logger, AppElevation, AppArgs, SingBoxConfig;
 
 const
   WM_DROVER_CAN_CLOSE = WM_APP + 501;
 
 type
-  TConfigSelector = record
-    name: string;
-    outbounds: TArray<string>;
-    default: integer;
-    defaultName: string;
-  end;
-
-  TConfigSelectors = TArray<TConfigSelector>;
-
-  TSelectorThreadTask = record
-    name, value: string;
-  end;
-
-  TSelectorThreadTasks = TArray<TSelectorThreadTask>;
-
-  TSingBoxConfig = record
-    clashApiExternalController, clashApiSecret: string;
-    selectors: TConfigSelectors;
-    proxyHost: string;
-    proxyPort: integer;
-    hasTunInbound: boolean;
-    jsonWithTun: string;
-    jsonWithoutTun: string;
-  end;
-
   TDroverEventKind = (dekError, dekRunning);
 
   TDroverEvent = record
@@ -59,7 +34,7 @@ type
     FIsElevated: boolean;
     FIsTunActive: boolean;
 
-    procedure SupervisorStateChanged(state: TCoreState; msg: string);
+    procedure HandleCoreEvent(event: TCoreEvent);
     procedure SupervisorTerminated(sender: TObject);
     procedure PostCanClose;
     procedure NotifyEvent(kind: TDroverEventKind; msg: string = '');
@@ -79,8 +54,6 @@ type
     procedure CheckSingBoxConfig(cfg: TSingBoxConfig);
     procedure ResetSelectors;
     procedure EditSelector(name, value: string);
-    procedure SendApiRequest(method, path, data: string);
-    procedure CreateSelectorThread(tasks: TSelectorThreadTasks);
     function EnableSystemProxy: boolean;
     function DisableSystemProxy: boolean;
     function Shutdown: boolean;
@@ -92,17 +65,6 @@ type
     property NotifyHandle: HWND read FNotifyHandle write FNotifyHandle;
     property IsElevated: boolean read FIsElevated;
     property IsTunActive: boolean read FIsTunActive;
-  end;
-
-  TSelectorThread = class(TThread)
-  protected
-    FDrover: TDrover;
-    tasks: TSelectorThreadTasks;
-
-    procedure Execute; override;
-  public
-    constructor Create(Drover: TDrover; tasks: TSelectorThreadTasks);
-    destructor Destroy; override;
   end;
 
 implementation
@@ -128,8 +90,8 @@ begin
   if not TFile.Exists(corePath) then
     raise Exception.Create('sing-box executable not found.');
 
-  FSupervisor := TCoreSupervisor.Create(corePath, FLogger);
-  FSupervisor.OnStateChanged := SupervisorStateChanged;
+  FSupervisor := TCoreSupervisor.Create(corePath, FLogger, sbConfig.clashApi);
+  FSupervisor.OnEvent := HandleCoreEvent;
   FSupervisor.OnTerminate := SupervisorTerminated;
   StartCore(CanUseTun and ((FOptions.tunStartMode = tsmOn) or (afTun in AFlags)));
 end;
@@ -140,7 +102,7 @@ begin
 
   if Assigned(FSupervisor) then
   begin
-    FSupervisor.OnStateChanged := nil;
+    FSupervisor.OnEvent := nil;
     FSupervisor.OnTerminate := nil;
 
     if not FSupervisor.Finished then
@@ -211,21 +173,30 @@ begin
   FPendingEvents.Clear;
 end;
 
-procedure TDrover.SupervisorStateChanged(state: TCoreState; msg: string);
+procedure TDrover.HandleCoreEvent(event: TCoreEvent);
 begin
   if FDestroying or FShutdownRequested then
     exit;
 
-  case state of
-    csRunning:
+  case event.kind of
+    cekState:
       begin
-        ResetSelectors;
-        NotifyEvent(dekRunning, '');
+        case event.state of
+          csRunning:
+            begin
+              ResetSelectors;
+              NotifyEvent(dekRunning, '');
+            end;
+
+          csFailed:
+            NotifyEvent(dekError, event.msg);
+        end;
       end;
 
-    csFailed:
-      NotifyEvent(dekError, msg);
+    cekError:
+      NotifyEvent(dekError, event.msg);
   end;
+
 end;
 
 procedure TDrover.SupervisorTerminated(sender: TObject);
@@ -290,8 +261,8 @@ begin
   clashApiObj.AddPair('secret', secret);
   experimentalObj.AddPair('clash_api', clashApiObj);
 
-  config.clashApiExternalController := controller;
-  config.clashApiSecret := secret;
+  config.clashApi.externalController := controller;
+  config.clashApi.secret := secret;
 end;
 
 function TDrover.ReadSingBoxConfig(configPath: string): TSingBoxConfig;
@@ -397,12 +368,12 @@ begin
       end;
     end;
 
-    result.clashApiExternalController := '';
-    result.clashApiSecret := '';
+    result.clashApi.externalController := '';
+    result.clashApi.secret := '';
     if rootObj.TryGetValue('experimental.clash_api', obj) then
     begin
-      obj.TryGetValue('external_controller', result.clashApiExternalController);
-      obj.TryGetValue('secret', result.clashApiSecret);
+      obj.TryGetValue('external_controller', result.clashApi.externalController);
+      obj.TryGetValue('secret', result.clashApi.secret);
     end
     else if Length(result.selectors) > 0 then
     begin
@@ -431,18 +402,13 @@ begin
     raise Exception.Create('No suitable mixed inbound found for the system proxy.');
 end;
 
-procedure TDrover.CreateSelectorThread(tasks: TSelectorThreadTasks);
-begin
-  TSelectorThread.Create(self, tasks);
-end;
-
 procedure TDrover.ResetSelectors;
 var
   selector: TConfigSelector;
   outboundI: integer;
   outboundName: string;
-  task: TSelectorThreadTask;
-  tasks: TSelectorThreadTasks;
+  task: TSelectorTask;
+  tasks: TSelectorTasks;
   taskI: integer;
 begin
   SetLength(tasks, Length(sbConfig.selectors));
@@ -469,16 +435,16 @@ begin
 
   SetLength(tasks, taskI);
 
-  CreateSelectorThread(tasks);
+  FSupervisor.RequestSetSelectors(tasks);
 end;
 
 procedure TDrover.EditSelector(name, value: string);
 var
-  task: TSelectorThreadTask;
+  task: TSelectorTask;
 begin
   task.name := name;
   task.value := value;
-  CreateSelectorThread([task]);
+  FSupervisor.RequestSetSelectors([task]);
 end;
 
 function TDrover.EnableSystemProxy: boolean;
@@ -489,70 +455,6 @@ end;
 function TDrover.DisableSystemProxy: boolean;
 begin
   result := SystemProxy.DisableSystemProxy;
-end;
-
-constructor TSelectorThread.Create(Drover: TDrover; tasks: TSelectorThreadTasks);
-begin
-  self.FDrover := Drover;
-  self.tasks := tasks;
-
-  FreeOnTerminate := true;
-  inherited Create(false);
-end;
-
-destructor TSelectorThread.Destroy;
-begin
-  inherited Destroy;
-end;
-
-procedure TDrover.SendApiRequest(method, path, data: string);
-var
-  client: THTTPClient;
-  body: TStringStream;
-  headers: TNetHeaders;
-  url: string;
-begin
-  if sbConfig.clashApiExternalController = '' then
-    exit;
-
-  url := 'http://' + sbConfig.clashApiExternalController + path;
-
-  client := THTTPClient.Create;
-  try
-    body := TStringStream.Create(data, TEncoding.UTF8);
-    try
-      SetLength(headers, 2);
-      headers[0].name := 'Authorization';
-      headers[0].value := 'Bearer ' + sbConfig.clashApiSecret;
-      headers[1].name := 'Content-Type';
-      headers[1].value := 'application/json';
-
-      if SameText(method, 'PUT') then
-      begin
-        client.Put(url, body, nil, headers);
-      end
-      else if SameText(method, 'DELETE') then
-      begin
-        client.Delete(url, nil, headers);
-      end;
-    finally
-      body.Free;
-    end;
-  finally
-    client.Free;
-  end;
-end;
-
-procedure TSelectorThread.Execute;
-var
-  task: TSelectorThreadTask;
-begin
-  for task in self.tasks do
-  begin
-    FDrover.SendApiRequest('PUT', '/proxies/' + task.name, '{"name":"' + task.value + '"}');
-  end;
-
-  FDrover.SendApiRequest('DELETE', '/connections', '');
 end;
 
 function TDrover.Shutdown: boolean;
@@ -569,7 +471,7 @@ begin
   if not FShutdownRequested then
   begin
     FShutdownRequested := true;
-    FSupervisor.OnStateChanged := nil;
+    FSupervisor.OnEvent := nil;
     FSupervisor.Terminate;
     TThread.RemoveQueuedEvents(FSupervisor);
   end;

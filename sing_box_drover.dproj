@@ -148,6 +148,8 @@
         <DCCReference Include="AppArgs.pas"/>
         <DCCReference Include="AppElevation.pas"/>
         <DCCReference Include="AppSingleInstance.pas"/>
+        <DCCReference Include="SingBoxConfig.pas"/>
+        <DCCReference Include="CoreApiClient.pas"/>
         <RcItem Include="icon.ico">
             <ResourceType>ICON</ResourceType>
             <ResourceId>TRAY_ICON</ResourceId>

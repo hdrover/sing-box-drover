@@ -16,7 +16,9 @@ uses
   Logger in 'Logger.pas',
   AppArgs in 'AppArgs.pas',
   AppElevation in 'AppElevation.pas',
-  AppSingleInstance in 'AppSingleInstance.pas';
+  AppSingleInstance in 'AppSingleInstance.pas',
+  SingBoxConfig in 'SingBoxConfig.pas',
+  CoreApiClient in 'CoreApiClient.pas';
 
 {$R *.res}
 

@@ -6,7 +6,7 @@ uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes, Vcl.Graphics,
   Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.ExtCtrls, Vcl.Menus, System.Net.HttpClient,
   System.Net.URLClient, System.JSON, System.IOUtils, System.Generics.Collections, Options, Drover,
-  AppElevation, AppArgs;
+  AppElevation, AppArgs, SingBoxConfig;
 
 type
   TfrmMain = class(TForm)

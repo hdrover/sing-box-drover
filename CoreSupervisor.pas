@@ -4,38 +4,57 @@ interface
 
 uses
   Winapi.Windows, System.SysUtils, System.Classes, System.IOUtils,
-  System.Generics.Collections, System.SyncObjs, Logger;
+  System.Generics.Collections, System.SyncObjs, Logger, SingBoxConfig,
+  CoreApiClient;
 
 type
+  TSelectorTask = record
+    name, value: string;
+  end;
+
+  TSelectorTasks = TArray<TSelectorTask>;
+
   TCoreState = (csStopped, csStarting, csRunning, csStopping, csFailed);
 
-  TCoreCommandKind = (cmdNone, cmdStart, cmdStop);
+  TCoreEventKind = (cekState, cekError);
+
+  TCoreEvent = record
+    kind: TCoreEventKind;
+    state: TCoreState;
+    msg: string;
+  end;
+
+  TCoreCommandKind = (cmdNone, cmdStart, cmdStop, cmdSetSelectors);
 
   TCoreCommand = record
     kind: TCoreCommandKind;
     configJson: string;
+    selectorTasks: TSelectorTasks;
   end;
 
   TCoreCommandQueue = TThreadedQueue<TCoreCommand>;
 
-  TCoreStateEvent = procedure(state: TCoreState; msg: string) of object;
+  TCoreEventHandler = procedure(event: TCoreEvent) of object;
 
   TCoreSupervisor = class(TThread)
   private
     FLogger: TLogger;
     FQueue: TCoreCommandQueue;
-    FOnStateChanged: TCoreStateEvent;
+    FOnEvent: TCoreEventHandler;
     FJobHandle: THandle;
     FProcessHandle: THandle;
     FProcessId: DWORD;
     FState: TCoreState;
     FExePath: string;
+    FCoreApiClient: TCoreApiClient;
 
+    procedure NotifyEvent(AEvent: TCoreEvent);
     procedure SetStateAndNotify(state: TCoreState; msg: string = '');
     procedure HandleCommand(cmd: TCoreCommand);
     procedure DoStart(configJson: string);
     function SendCtrlCToConsole(processId: DWORD): boolean;
     procedure DoStopGraceful;
+    procedure DoSetSelectors(tasks: TSelectorTasks);
     procedure CheckProcessStatus;
     procedure CleanupProcess;
     procedure Log(const AMessage: string);
@@ -43,13 +62,14 @@ type
     procedure Execute; override;
     procedure TerminatedSet; override;
   public
-    constructor Create(AExePath: string; ALogger: TLogger);
+    constructor Create(AExePath: string; ALogger: TLogger; AClashApiConfig: TClashApiConfig);
     destructor Destroy; override;
 
     procedure RequestStart(configJson: string);
     procedure RequestStop;
+    procedure RequestSetSelectors(tasks: TSelectorTasks);
 
-    property OnStateChanged: TCoreStateEvent read FOnStateChanged write FOnStateChanged;
+    property OnEvent: TCoreEventHandler read FOnEvent write FOnEvent;
     property state: TCoreState read FState;
   end;
 
@@ -57,12 +77,13 @@ implementation
 
 const
   STATE_NAMES: array [TCoreState] of string = ('Stopped', 'Starting', 'Running', 'Stopping', 'Failed');
-  COMMAND_NAMES: array [TCoreCommandKind] of string = ('None', 'Start', 'Stop');
+  COMMAND_NAMES: array [TCoreCommandKind] of string = ('None', 'Start', 'Stop', 'SetSelectors');
 
-constructor TCoreSupervisor.Create(AExePath: string; ALogger: TLogger);
+constructor TCoreSupervisor.Create(AExePath: string; ALogger: TLogger; AClashApiConfig: TClashApiConfig);
 begin
   FLogger := ALogger;
   FQueue := TCoreCommandQueue.Create(10, 200, 200);
+  FCoreApiClient := TCoreApiClient.Create(AClashApiConfig);
   FJobHandle := 0;
   FProcessHandle := 0;
   FProcessId := 0;
@@ -83,6 +104,7 @@ begin
   TThread.RemoveQueuedEvents(self);
   CleanupProcess;
   FreeAndNil(FQueue);
+  FreeAndNil(FCoreApiClient);
 
   inherited;
 end;
@@ -136,26 +158,37 @@ begin
   FProcessId := 0;
 end;
 
-procedure TCoreSupervisor.SetStateAndNotify(state: TCoreState; msg: string);
+procedure TCoreSupervisor.NotifyEvent(AEvent: TCoreEvent);
 var
-  handler: TCoreStateEvent;
+  handler: TCoreEventHandler;
 begin
-  Log(Trim(Format('State: %s. %s', [STATE_NAMES[state], msg])));
-
-  FState := state;
-
   if Terminated then
     exit;
 
-  handler := FOnStateChanged;
+  handler := FOnEvent;
   if not Assigned(handler) then
     exit;
 
   TThread.Queue(self,
     procedure
     begin
-      handler(state, msg);
+      handler(AEvent);
     end);
+end;
+
+procedure TCoreSupervisor.SetStateAndNotify(state: TCoreState; msg: string);
+var
+  event: TCoreEvent;
+begin
+  Log(Trim(Format('State: %s. %s', [STATE_NAMES[state], msg])));
+
+  FState := state;
+
+  event.kind := cekState;
+  event.state := state;
+  event.msg := msg;
+
+  NotifyEvent(event);
 end;
 
 procedure TCoreSupervisor.RequestStart(configJson: string);
@@ -175,6 +208,15 @@ begin
   FQueue.PushItem(cmd);
 end;
 
+procedure TCoreSupervisor.RequestSetSelectors(tasks: TSelectorTasks);
+var
+  cmd: TCoreCommand;
+begin
+  cmd.kind := cmdSetSelectors;
+  cmd.selectorTasks := tasks;
+  FQueue.PushItem(cmd);
+end;
+
 procedure TCoreSupervisor.HandleCommand(cmd: TCoreCommand);
 begin
   Log(Format('Command: %s.', [COMMAND_NAMES[cmd.kind]]));
@@ -184,6 +226,8 @@ begin
       DoStart(cmd.configJson);
     cmdStop:
       DoStopGraceful;
+    cmdSetSelectors:
+      DoSetSelectors(cmd.selectorTasks);
   end;
 end;
 
@@ -405,6 +449,32 @@ end;
 procedure TCoreSupervisor.Log(const AMessage: string);
 begin
   FLogger.Log('[Core] ' + AMessage);
+end;
+
+procedure TCoreSupervisor.DoSetSelectors(tasks: TSelectorTasks);
+var
+  task: TSelectorTask;
+  event: TCoreEvent;
+  s: string;
+begin
+  try
+    for task in tasks do
+    begin
+      FCoreApiClient.SendClashApiRequest('PUT', '/proxies/' + task.name, '{"name":"' + task.value + '"}');
+    end;
+
+    FCoreApiClient.SendClashApiRequest('DELETE', '/connections', '');
+  except
+    on E: Exception do
+    begin
+      s := 'Selector update failed.';
+      Log(s);
+
+      event.kind := cekError;
+      event.msg := s;
+      NotifyEvent(event);
+    end;
+  end;
 end;
 
 end.
