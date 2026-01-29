@@ -186,10 +186,7 @@ begin
       begin
         case event.state of
           csRunning:
-            begin
-              ResetSelectors;
-              NotifyEvent(dekRunning, '');
-            end;
+            NotifyEvent(dekRunning, '');
 
           csFailed:
             NotifyEvent(dekError, event.msg);
@@ -198,6 +195,9 @@ begin
 
     cekError:
       NotifyEvent(dekError, event.msg);
+
+    cekApiReady:
+      ResetSelectors;
   end;
 
 end;

@@ -15,6 +15,8 @@ type
   TClashApiConfig = record
     externalController: string;
     secret: string;
+
+    function IsConfigured: boolean;
   end;
 
   TSingBoxConfig = record
@@ -28,5 +30,10 @@ type
   end;
 
 implementation
+
+function TClashApiConfig.IsConfigured: boolean;
+begin
+  result := externalController <> '';
+end;
 
 end.

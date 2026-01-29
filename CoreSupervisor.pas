@@ -16,7 +16,7 @@ type
 
   TCoreState = (csStopped, csStarting, csRunning, csStopping, csFailed);
 
-  TCoreEventKind = (cekState, cekError);
+  TCoreEventKind = (cekState, cekError, cekApiReady);
 
   TCoreEvent = record
     kind: TCoreEventKind;
@@ -47,6 +47,9 @@ type
     FState: TCoreState;
     FExePath: string;
     FCoreApiClient: TCoreApiClient;
+    FApiCheckActive: boolean;
+    FApiNextCheckTick: UInt64;
+    FApiDeadlineTick: UInt64;
 
     procedure NotifyEvent(AEvent: TCoreEvent);
     procedure SetStateAndNotify(state: TCoreState; msg: string = '');
@@ -56,8 +59,11 @@ type
     procedure DoStopGraceful;
     procedure DoSetSelectors(tasks: TSelectorTasks);
     procedure CheckProcessStatus;
+    procedure InitApiCheck;
+    procedure CheckApiStatus;
     procedure CleanupProcess;
     procedure Log(const AMessage: string);
+    function IsProcessRunning: boolean;
   protected
     procedure Execute; override;
     procedure TerminatedSet; override;
@@ -83,12 +89,13 @@ constructor TCoreSupervisor.Create(AExePath: string; ALogger: TLogger; AClashApi
 begin
   FLogger := ALogger;
   FQueue := TCoreCommandQueue.Create(10, 200, 200);
-  FCoreApiClient := TCoreApiClient.Create(AClashApiConfig);
+  FCoreApiClient := TCoreApiClient.Create(AClashApiConfig, ALogger);
   FJobHandle := 0;
   FProcessHandle := 0;
   FProcessId := 0;
   FState := csStopped;
   FExePath := AExePath;
+  FApiCheckActive := false;
 
   FreeOnTerminate := false;
   inherited Create(false);
@@ -119,6 +126,7 @@ begin
   while not Terminated do
   begin
     CheckProcessStatus;
+    CheckApiStatus;
 
     waitResult := FQueue.PopItem(cmd);
 
@@ -364,10 +372,8 @@ begin
 
     Log(Format('Process created, PID: %d.', [processId]));
 
-    // TODO Implement proper API readiness check. Sleep is a temporary workaround.
-    sleep(1000);
-
     SetStateAndNotify(csRunning);
+    InitApiCheck;
   except
     on E: Exception do
     begin
@@ -446,9 +452,74 @@ begin
   end;
 end;
 
+procedure TCoreSupervisor.InitApiCheck;
+const
+  API_CHECK_DELAY = 500;
+  API_CHECK_TIMEOUT = 60000;
+var
+  now: UInt64;
+begin
+  if not FCoreApiClient.IsConfigured then
+  begin
+    FApiCheckActive := false;
+    exit;
+  end;
+
+  now := GetTickCount64;
+  FApiCheckActive := true;
+  FApiNextCheckTick := now + API_CHECK_DELAY;
+  FApiDeadlineTick := now + API_CHECK_TIMEOUT;
+end;
+
+procedure TCoreSupervisor.CheckApiStatus;
+const
+  API_CHECK_INTERVAL = 500;
+var
+  now: UInt64;
+  event: TCoreEvent;
+begin
+  if not FApiCheckActive then
+    exit;
+
+  if not IsProcessRunning then
+  begin
+    FApiCheckActive := false;
+    exit;
+  end;
+
+  now := GetTickCount64;
+
+  if now < FApiNextCheckTick then
+    exit;
+
+  if now >= FApiDeadlineTick then
+  begin
+    Log('API check timeout, stopping checks.');
+    FApiCheckActive := false;
+    exit;
+  end;
+
+  FApiNextCheckTick := now + API_CHECK_INTERVAL;
+
+  if FCoreApiClient.CheckReady then
+  begin
+    Log('API ready.');
+    FApiCheckActive := false;
+
+    event.kind := cekApiReady;
+    event.msg := '';
+    NotifyEvent(event);
+  end;
+end;
+
 procedure TCoreSupervisor.Log(const AMessage: string);
 begin
   FLogger.Log('[Core] ' + AMessage);
+end;
+
+function TCoreSupervisor.IsProcessRunning: boolean;
+begin
+  result := FProcessHandle <> 0;
 end;
 
 procedure TCoreSupervisor.DoSetSelectors(tasks: TSelectorTasks);
