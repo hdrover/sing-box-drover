@@ -107,7 +107,7 @@ To allow outbound switching from the tray menu, `experimental.clash_api` must be
 
 If this section is missing but your config has selectors, the program will add it automatically.
 
-### Selectors for outbound switching
+### Selectors for outbound switching (optional)
 
 In your `outbounds` section, define one or more `selector` outbounds. They will appear in the tray menu:
 
