@@ -38,6 +38,7 @@ type
     procedure HandleCoreEvent(event: TCoreEvent);
     procedure SupervisorTerminated(sender: TObject);
     procedure PostCanClose;
+    procedure FinalizeShutdown;
     procedure NotifyEvent(kind: TDroverEventKind; msg: string = '');
     procedure SetOnEvent(value: TDroverEventHandler);
     procedure FlushPendingEvents;
@@ -209,6 +210,7 @@ begin
 
   if FShutdownRequested then
   begin
+    FinalizeShutdown;
     PostCanClose;
   end;
 end;
@@ -473,7 +475,7 @@ begin
 
   if (not Assigned(FSupervisor)) or FSupervisor.Finished then
   begin
-    FShutdownComplete := true;
+    FinalizeShutdown;
     exit(true);
   end;
 
@@ -486,6 +488,15 @@ begin
   end;
 
   result := false;
+end;
+
+procedure TDrover.FinalizeShutdown;
+begin
+  if FShutdownComplete then
+    exit;
+  FShutdownComplete := true;
+  if Assigned(FLogger) then
+    FLogger.Close;
 end;
 
 procedure TDrover.PostCanClose;
