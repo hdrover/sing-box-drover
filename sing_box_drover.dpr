@@ -19,7 +19,8 @@ uses
   AppSingleInstance in 'AppSingleInstance.pas',
   SingBoxConfig in 'SingBoxConfig.pas',
   CoreApiClient in 'CoreApiClient.pas',
-  SingBoxBpf in 'SingBoxBpf.pas';
+  SingBoxBpf in 'SingBoxBpf.pas',
+  ConfigReader in 'ConfigReader.pas';
 
 {$R *.res}
 

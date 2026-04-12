@@ -1,4 +1,4 @@
-﻿unit SystemProxy;
+unit SystemProxy;
 
 interface
 
