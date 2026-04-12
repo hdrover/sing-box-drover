@@ -2,7 +2,12 @@ unit SingBoxConfig;
 
 interface
 
+uses
+  SingBoxBpf;
+
 type
+  TConfigSourceFormat = (csfJson, csfBpf);
+
   TConfigSelector = record
     name: string;
     outbounds: TArray<string>;
@@ -19,6 +24,15 @@ type
     function IsConfigured: boolean;
   end;
 
+  TConfigSource = record
+    filePath: string;
+    format: TConfigSourceFormat;
+    jsonText: string;
+    bpfProfile: TBpfProfile;
+
+    function isBpf: boolean;
+  end;
+
   TSingBoxConfig = record
     clashApi: TClashApiConfig;
     selectors: TConfigSelectors;
@@ -30,6 +44,11 @@ type
   end;
 
 implementation
+
+function TConfigSource.isBpf: boolean;
+begin
+  result := format = csfBpf;
+end;
 
 function TClashApiConfig.IsConfigured: boolean;
 begin

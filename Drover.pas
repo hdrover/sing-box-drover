@@ -6,7 +6,7 @@ uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes,
   Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.ExtCtrls, Vcl.Menus, SystemProxy,
   System.JSON, System.IOUtils, System.Generics.Collections, Options, JsonUtils,
-  CoreSupervisor, Logger, AppElevation, AppArgs, SingBoxConfig;
+  CoreSupervisor, Logger, AppElevation, AppArgs, SingBoxConfig, SingBoxBpf;
 
 const
   WM_DROVER_CAN_CLOSE = WM_APP + 501;
@@ -45,6 +45,7 @@ type
     procedure RemoveTunInbounds(rootObj: TJSONObject);
     procedure CreateDefaultClashApi(rootObj: TJSONObject; var config: TSingBoxConfig);
   public
+    configSource: TConfigSource;
     sbConfig: TSingBoxConfig;
     FOptions: TDroverOptions;
     currentProcessDir: string;
@@ -52,7 +53,8 @@ type
     constructor Create(AFlags: TAppFlags);
     destructor Destroy; override;
 
-    function ReadSingBoxConfig(configPath: string): TSingBoxConfig;
+    function ReadConfigSource(configPath: string): TConfigSource;
+    function ReadSingBoxConfig(const configSource: TConfigSource): TSingBoxConfig;
     procedure CheckSingBoxConfig(cfg: TSingBoxConfig);
     procedure ResetSelectors;
     procedure EditSelector(selectorIdx, outboundIdx: integer);
@@ -84,7 +86,8 @@ begin
 
   FLogger := TLogger.Create(FOptions.logFile);
 
-  sbConfig := ReadSingBoxConfig(FOptions.sbConfigFile);
+  configSource := ReadConfigSource(FOptions.sbConfigFile);
+  sbConfig := ReadSingBoxConfig(configSource);
   CheckSingBoxConfig(sbConfig);
   FSelectors := sbConfig.Selectors;
 
@@ -270,7 +273,48 @@ begin
   config.clashApi.secret := secret;
 end;
 
-function TDrover.ReadSingBoxConfig(configPath: string): TSingBoxConfig;
+function TDrover.ReadConfigSource(configPath: string): TConfigSource;
+var
+  configBytes: TBytes;
+
+  function Utf8TextFromBytes(const data: TBytes): string;
+  var
+    offset: integer;
+  begin
+    offset := 0;
+    if (Length(data) >= 3) and (data[0] = $EF) and (data[1] = $BB) and (data[2] = $BF) then
+      offset := 3;
+
+    result := TEncoding.UTF8.GetString(data, offset, Length(data) - offset);
+  end;
+
+begin
+  result := Default (TConfigSource);
+  result.filePath := configPath;
+
+  if not TFile.Exists(configPath) then
+    raise Exception.Create('Configuration file not found.');
+
+  try
+    configBytes := TFile.ReadAllBytes(configPath);
+  except
+    raise Exception.Create('Failed to read configuration file.');
+  end;
+
+  if LooksLikeBpfProfileData(configBytes) then
+  begin
+    result.format := csfBpf;
+    result.bpfProfile := DecodeBpfProfile(configBytes);
+    result.jsonText := result.bpfProfile.configJson;
+  end
+  else
+  begin
+    result.format := csfJson;
+    result.jsonText := Utf8TextFromBytes(configBytes);
+  end;
+end;
+
+function TDrover.ReadSingBoxConfig(const configSource: TConfigSource): TSingBoxConfig;
 var
   jsonText: string;
   rootValue: TJSONValue;
@@ -294,11 +338,7 @@ var
 begin
   result := Default (TSingBoxConfig);
 
-  if not TFile.Exists(configPath) then
-    raise Exception.Create('Configuration file not found.');
-
-  jsonText := TFile.ReadAllText(configPath, TEncoding.UTF8);
-  jsonText := NormalizeJson(jsonText);
+  jsonText := NormalizeJson(configSource.jsonText);
   rootValue := TJSONObject.ParseJSONValue(jsonText);
   if rootValue = nil then
     raise Exception.Create('Configuration file is corrupted or contains invalid JSON.');
