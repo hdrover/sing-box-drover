@@ -6,7 +6,8 @@ uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes,
   Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.ExtCtrls, Vcl.Menus, SystemProxy,
   System.JSON, System.IOUtils, System.Generics.Collections, Options,
-  CoreSupervisor, Logger, AppElevation, AppArgs, SingBoxConfig, ConfigReader;
+  CoreSupervisor, Logger, AppElevation, AppArgs, SingBoxConfig, ConfigReader,
+  ConfigUpdater;
 
 const
   WM_DROVER_CAN_CLOSE = WM_APP + 501;
@@ -24,11 +25,14 @@ type
   TDrover = class
   private
     FSupervisor: TCoreSupervisor;
+    FConfigUpdater: TConfigUpdater;
     FOnEvent: TDroverEventHandler;
     FLogger: TLogger;
     FNotifyHandle: HWND;
     FShutdownRequested: boolean;
-    FShutdownComplete: boolean;
+    FShutdownCompleted: boolean;
+    FSupervisorTerminateSeen: boolean;
+    FConfigUpdaterTerminateSeen: boolean;
     FDestroying: boolean;
     FPendingEvents: TList<TDroverEvent>;
     FIsElevated: boolean;
@@ -36,12 +40,17 @@ type
     FSelectors: TConfigSelectors;
 
     procedure HandleCoreEvent(event: TCoreEvent);
-    procedure SupervisorTerminated(sender: TObject);
+    procedure HandleWorkerTerminated(sender: TObject);
     procedure PostCanClose;
-    procedure FinalizeShutdown;
+    function IsWorkerFinished(AWorker: TThread; ATerminateSeen: boolean): boolean;
+    function BackgroundWorkersFinished: boolean;
+    procedure RequestShutdownWorkers;
+    procedure TryCompleteShutdown;
     procedure NotifyEvent(kind: TDroverEventKind; msg: string = '');
     procedure SetOnEvent(value: TDroverEventHandler);
     procedure FlushPendingEvents;
+    procedure DestroyConfigUpdater;
+    procedure DestroySupervisor;
   public
     configSource: TConfigSource;
     sbConfig: TSingBoxConfig;
@@ -74,6 +83,7 @@ var
   corePath: string;
 begin
   FPendingEvents := TList<TDroverEvent>.Create;
+  FConfigUpdater := nil;
 
   currentProcessDir := IncludeTrailingPathDelimiter(ExtractFilePath(ParamStr(0)));
 
@@ -94,29 +104,22 @@ begin
 
   FSupervisor := TCoreSupervisor.Create(corePath, FLogger, sbConfig.clashApi);
   FSupervisor.OnEvent := HandleCoreEvent;
-  FSupervisor.OnTerminate := SupervisorTerminated;
+  FSupervisor.OnTerminate := HandleWorkerTerminated;
   StartCore(CanUseTun and ((FOptions.tunStartMode = tsmOn) or (afTun in AFlags)));
+
+  if configSource.isBpf and configSource.bpfProfile.isRemote and configSource.bpfProfile.autoUpdate then
+  begin
+    FConfigUpdater := TConfigUpdater.Create(configSource, FLogger);
+    FConfigUpdater.OnTerminate := HandleWorkerTerminated;
+  end;
 end;
 
 destructor TDrover.Destroy;
 begin
   FDestroying := true;
 
-  if Assigned(FSupervisor) then
-  begin
-    FSupervisor.OnEvent := nil;
-    FSupervisor.OnTerminate := nil;
-
-    if not FSupervisor.Finished then
-    begin
-      FSupervisor.Terminate;
-      TThread.RemoveQueuedEvents(FSupervisor);
-      FSupervisor.WaitFor;
-      TThread.RemoveQueuedEvents(FSupervisor);
-    end;
-
-    FreeAndNil(FSupervisor);
-  end;
+  DestroyConfigUpdater;
+  DestroySupervisor;
 
   FreeAndNil(FPendingEvents);
   FreeAndNil(FLogger);
@@ -175,6 +178,41 @@ begin
   FPendingEvents.Clear;
 end;
 
+procedure TDrover.DestroyConfigUpdater;
+begin
+  if not Assigned(FConfigUpdater) then
+    exit;
+
+  FConfigUpdater.OnTerminate := nil;
+
+  if not FConfigUpdater.Finished then
+  begin
+    FConfigUpdater.Terminate;
+    FConfigUpdater.WaitFor;
+  end;
+
+  FreeAndNil(FConfigUpdater);
+end;
+
+procedure TDrover.DestroySupervisor;
+begin
+  if not Assigned(FSupervisor) then
+    exit;
+
+  FSupervisor.OnEvent := nil;
+  FSupervisor.OnTerminate := nil;
+
+  if not FSupervisor.Finished then
+  begin
+    FSupervisor.Terminate;
+    TThread.RemoveQueuedEvents(FSupervisor);
+    FSupervisor.WaitFor;
+    TThread.RemoveQueuedEvents(FSupervisor);
+  end;
+
+  FreeAndNil(FSupervisor);
+end;
+
 procedure TDrover.HandleCoreEvent(event: TCoreEvent);
 begin
   if FDestroying or FShutdownRequested then
@@ -201,16 +239,19 @@ begin
 
 end;
 
-procedure TDrover.SupervisorTerminated(sender: TObject);
+procedure TDrover.HandleWorkerTerminated(sender: TObject);
 begin
-  if FDestroying then
+  if sender = FSupervisor then
+    FSupervisorTerminateSeen := true
+  else if sender = FConfigUpdater then
+    FConfigUpdaterTerminateSeen := true;
+
+  if FDestroying or (not FShutdownRequested) or FShutdownCompleted then
     exit;
 
-  if FShutdownRequested then
-  begin
-    FinalizeShutdown;
+  TryCompleteShutdown;
+  if FShutdownCompleted then
     PostCanClose;
-  end;
 end;
 
 procedure TDrover.ResetSelectors;
@@ -276,33 +317,51 @@ end;
 
 function TDrover.Shutdown: boolean;
 begin
-  if FShutdownComplete then
+  if FShutdownCompleted then
     exit(true);
-
-  if (not Assigned(FSupervisor)) or FSupervisor.Finished then
-  begin
-    FinalizeShutdown;
-    exit(true);
-  end;
 
   if not FShutdownRequested then
   begin
     FShutdownRequested := true;
+    RequestShutdownWorkers;
+  end;
+
+  TryCompleteShutdown;
+  result := FShutdownCompleted;
+end;
+
+procedure TDrover.TryCompleteShutdown;
+begin
+  if FShutdownCompleted or (not BackgroundWorkersFinished) then
+    exit;
+
+  FShutdownCompleted := true;
+  if Assigned(FLogger) then
+    FLogger.Close;
+end;
+
+function TDrover.IsWorkerFinished(AWorker: TThread; ATerminateSeen: boolean): boolean;
+begin
+  result := (not Assigned(AWorker)) or ATerminateSeen or AWorker.Finished;
+end;
+
+function TDrover.BackgroundWorkersFinished: boolean;
+begin
+  result := IsWorkerFinished(FSupervisor, FSupervisorTerminateSeen) and
+    IsWorkerFinished(FConfigUpdater, FConfigUpdaterTerminateSeen);
+end;
+
+procedure TDrover.RequestShutdownWorkers;
+begin
+  if Assigned(FConfigUpdater) and not FConfigUpdater.Finished then
+    FConfigUpdater.Terminate;
+
+  if Assigned(FSupervisor) and not FSupervisor.Finished then
+  begin
     FSupervisor.OnEvent := nil;
     FSupervisor.Terminate;
     TThread.RemoveQueuedEvents(FSupervisor);
   end;
-
-  result := false;
-end;
-
-procedure TDrover.FinalizeShutdown;
-begin
-  if FShutdownComplete then
-    exit;
-  FShutdownComplete := true;
-  if Assigned(FLogger) then
-    FLogger.Close;
 end;
 
 procedure TDrover.PostCanClose;

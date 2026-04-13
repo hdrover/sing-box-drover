@@ -20,7 +20,8 @@ uses
   SingBoxConfig in 'SingBoxConfig.pas',
   CoreApiClient in 'CoreApiClient.pas',
   SingBoxBpf in 'SingBoxBpf.pas',
-  ConfigReader in 'ConfigReader.pas';
+  ConfigReader in 'ConfigReader.pas',
+  ConfigUpdater in 'ConfigUpdater.pas';
 
 {$R *.res}
 
@@ -58,6 +59,10 @@ begin
   Application.ShowMainForm := false;
   Application.CreateForm(TfrmMain, frmMain);
   frmMain.InitDrover(Drover);
-  Application.Run;
+  try
+    Application.Run;
+  finally
+    FreeAndNil(Drover);
+  end;
 
 end.

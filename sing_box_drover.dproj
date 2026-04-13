@@ -154,6 +154,7 @@
         <DCCReference Include="CoreApiClient.pas"/>
         <DCCReference Include="SingBoxBpf.pas"/>
         <DCCReference Include="ConfigReader.pas"/>
+        <DCCReference Include="ConfigUpdater.pas"/>
         <RcItem Include="icon.ico">
             <ResourceType>ICON</ResourceType>
             <ResourceId>TRAY_ICON</ResourceId>
