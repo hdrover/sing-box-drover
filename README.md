@@ -29,7 +29,7 @@ There are many GUI clients built on top of sing-box, but they usually:
 sing-box-drover takes a different approach:
 
 - you download and use the official `sing-box.exe` yourself
-- you keep your normal sing-box JSON config as-is
+- you keep your normal sing-box config as-is
 - the program only adds a small tray UI on top
 
 This is close to how the official client works: full control stays in the config, and the UI is only a thin layer on
@@ -53,7 +53,7 @@ top.
 3. Place files
     - Put `sing-box-drover.exe` (and its config file from the archive) into any folder.
     - Put `sing-box.exe` into the same folder, or specify another folder via `sb-dir` (see below).
-    - Prepare your sing-box JSON config file and point the program to it.
+    - Prepare your sing-box config file and point the program to it.
 
 After that, run `sing-box-drover.exe`. A tray icon should appear.
 
@@ -152,7 +152,7 @@ Parameters:
 - `sb-dir` — path to the folder with `sing-box.exe`.  
   If empty, the program searches for `sing-box.exe` in its own folder.
 
-- `sb-config-file` — sing-box config file.  
+- `sb-config-file` — sing-box config file (JSON or `.bpf`).  
   You can specify just a file name or an absolute path.
 
 - `tun-start-mode` — whether to enable TUN mode on program start (requires a `tun` inbound in your sing-box config):
@@ -180,3 +180,22 @@ If you want the program to start automatically with Windows:
 3. In the opened folder, create a shortcut to `sing-box-drover.exe`.
 
 Windows will then launch sing-box-drover automatically at logon.
+
+## BPF profiles
+
+In addition to plain JSON configs, sing-box-drover supports `.bpf` profile files — the binary format used by the
+official sing-box clients (SFA for Android, SFI/SFM for Apple platforms) for profile export/import.
+
+For remote BPF profiles (profiles with a URL and auto-update enabled), sing-box-drover automatically checks for config updates.
+The program checks for updates about one minute after launch and then periodically based on the interval from the profile (at least every 15 minutes).
+The running sing-box instance is not restarted automatically — the new config will be used on the next program launch.
+
+### About the format
+
+`.bpf` is an undocumented binary container. There is no standalone converter or specification published by the project —
+the format is defined only by the source code in the `libbox` package of the sing-box repository.
+
+A `.bpf` file consists of a 1-byte message type, a 1-byte version, and a gzip-compressed payload containing the profile
+name, type, JSON config, and (for remote profiles) the URL, auto-update flag, update interval, and last-updated timestamp.
+
+The easiest way to obtain a `.bpf` file is to export a profile from an official sing-box client.
