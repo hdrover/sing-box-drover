@@ -21,7 +21,8 @@ uses
   CoreApiClient in 'CoreApiClient.pas',
   SingBoxBpf in 'SingBoxBpf.pas',
   ConfigReader in 'ConfigReader.pas',
-  ConfigUpdater in 'ConfigUpdater.pas';
+  ConfigUpdater in 'ConfigUpdater.pas',
+  ElevatedTrayIcon in 'ElevatedTrayIcon.pas';
 
 {$R *.res}
 

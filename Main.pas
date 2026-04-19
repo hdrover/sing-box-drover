@@ -1,4 +1,4 @@
-﻿unit Main;
+unit Main;
 
 interface
 
@@ -6,7 +6,7 @@ uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes, Vcl.Graphics,
   Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.ExtCtrls, Vcl.Menus, System.Net.HttpClient,
   System.Net.URLClient, System.JSON, System.IOUtils, System.Generics.Collections, Options, Drover,
-  AppElevation, AppArgs, SingBoxConfig;
+  AppElevation, AppArgs, SingBoxConfig, ElevatedTrayIcon;
 
 type
   TfrmMain = class(TForm)
@@ -24,7 +24,7 @@ type
     procedure FormCreate(Sender: TObject);
     procedure miTunClick(Sender: TObject);
   private
-    TrayIcon: TTrayIcon;
+    TrayIcon: TElevatedTrayIcon;
     FDrover: TDrover;
     FIsTunActive: boolean;
     FIsSystemProxyActive: boolean;
@@ -59,7 +59,7 @@ begin
   miTun.Enabled := false;
   miTun.Visible := false;
 
-  TrayIcon := TTrayIcon.Create(self);
+  TrayIcon := TElevatedTrayIcon.Create(self);
   TrayIcon.PopupMenu := PopupMenu;
   TrayIcon.OnClick := TrayIconClick;
 end;
