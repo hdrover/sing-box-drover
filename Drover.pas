@@ -71,7 +71,6 @@ type
     property Options: TDroverOptions read FOptions;
     property OnEvent: TDroverEventHandler read FOnEvent write SetOnEvent;
     property NotifyHandle: HWND read FNotifyHandle write FNotifyHandle;
-    property IsElevated: boolean read FIsElevated;
     property IsTunActive: boolean read FIsTunActive;
     property Selectors: TConfigSelectors read FSelectors;
   end;

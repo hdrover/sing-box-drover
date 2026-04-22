@@ -21,6 +21,18 @@ object frmMain: TfrmMain
   object PopupMenu: TPopupMenu
     Left = 248
     Top = 40
+    object miExtras: TMenuItem
+      Caption = 'Extras'
+      object miAutostart: TMenuItem
+        Caption = 'Autostart'
+        Enabled = False
+        OnClick = miAutostartClick
+      end
+      object miHomepage: TMenuItem
+        Caption = 'GitHub'
+        OnClick = miHomepageClick
+      end
+    end
     object miTun: TMenuItem
       Caption = 'TUN mode'
       Visible = False

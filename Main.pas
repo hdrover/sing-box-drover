@@ -6,7 +6,7 @@ uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes, Vcl.Graphics,
   Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.ExtCtrls, Vcl.Menus, System.Net.HttpClient,
   System.Net.URLClient, System.JSON, System.IOUtils, System.Generics.Collections, Options, Drover,
-  AppElevation, AppArgs, SingBoxConfig, ElevatedTrayIcon;
+  AppElevation, AppArgs, SingBoxConfig, ElevatedTrayIcon, Autostart, Winapi.ShellAPI;
 
 type
   TfrmMain = class(TForm)
@@ -15,6 +15,9 @@ type
     miSystemProxy: TMenuItem;
     miBeforeSelectors: TMenuItem;
     miTun: TMenuItem;
+    miExtras: TMenuItem;
+    miAutostart: TMenuItem;
+    miHomepage: TMenuItem;
     procedure FormCloseQuery(Sender: TObject; var CanClose: boolean);
     procedure miQuitClick(Sender: TObject);
     procedure miSystemProxyClick(Sender: TObject);
@@ -23,6 +26,8 @@ type
     procedure DrawSelectors;
     procedure FormCreate(Sender: TObject);
     procedure miTunClick(Sender: TObject);
+    procedure miAutostartClick(Sender: TObject);
+    procedure miHomepageClick(Sender: TObject);
   private
     TrayIcon: TElevatedTrayIcon;
     FDrover: TDrover;
@@ -36,8 +41,12 @@ type
     procedure ToggleTun(AEnable: boolean);
     procedure HandleDroverEvent(event: TDroverEvent);
     procedure WMDroverCanClose(var msg: TMessage); message WM_DROVER_CAN_CLOSE;
+    procedure WMAutostartResult(var msg: TMessage); message WM_AUTOSTART_RESULT;
     procedure ShowBalloon(AText, ATitle: string; AFlags: TBalloonFlags = bfInfo; ATimeout: integer = 10000);
     procedure ShowOnlyExitInTray;
+    procedure InitAutostart;
+    procedure StartAutostartThread(AAction: TAutostartAction);
+    procedure HandleAutostartResult(const r: TAutostartResult);
   public
 
     procedure InitDrover(ADrover: TDrover);
@@ -62,6 +71,90 @@ begin
   TrayIcon := TElevatedTrayIcon.Create(self);
   TrayIcon.PopupMenu := PopupMenu;
   TrayIcon.OnClick := TrayIconClick;
+
+  InitAutostart;
+end;
+
+procedure TfrmMain.InitAutostart;
+var
+  flags: TAppFlags;
+  initialAction: TAutostartAction;
+begin
+  miAutostart.Enabled := false;
+  miAutostart.Checked := false;
+
+  flags := GetAppFlags;
+  if afAutostartEnable in flags then
+    initialAction := aaEnable
+  else if afAutostartDisable in flags then
+    initialAction := aaDisable
+  else
+    initialAction := aaCheck;
+
+  StartAutostartThread(initialAction);
+end;
+
+procedure TfrmMain.StartAutostartThread(AAction: TAutostartAction);
+begin
+  miAutostart.Enabled := false;
+  TAutostartThread.Create(AAction, Handle);
+end;
+
+procedure TfrmMain.WMAutostartResult(var msg: TMessage);
+var
+  p: PAutostartResult;
+begin
+  p := PAutostartResult(msg.LParam);
+  if p = nil then
+    exit;
+  try
+    HandleAutostartResult(p^);
+  finally
+    Dispose(p);
+  end;
+end;
+
+procedure TfrmMain.HandleAutostartResult(const r: TAutostartResult);
+begin
+  miAutostart.Enabled := r.state <> asUnknown;
+  miAutostart.Checked := r.state = asEnabled;
+
+  if (not r.success) and (r.action <> aaCheck) then
+    ShowBalloon(r.errorMsg, '', bfError);
+end;
+
+procedure TfrmMain.miAutostartClick(Sender: TObject);
+var
+  flag: TAppFlag;
+  action: TAutostartAction;
+begin
+  if FClosePending then
+    exit;
+
+  if miAutostart.Checked then
+  begin
+    flag := afAutostartDisable;
+    action := aaDisable;
+  end
+  else
+  begin
+    flag := afAutostartEnable;
+    action := aaEnable;
+  end;
+
+  if not IsProcessElevated then
+  begin
+    if RunAsAdminSelf(FlagsToCmdLine([flag, afElevatedRestart]), Handle) then
+      Close;
+    exit;
+  end;
+
+  StartAutostartThread(action);
+end;
+
+procedure TfrmMain.miHomepageClick(Sender: TObject);
+begin
+  ShellExecute(0, 'open', 'https://github.com/hdrover/sing-box-drover', nil, nil, SW_SHOWNORMAL);
 end;
 
 procedure TfrmMain.InitDrover(ADrover: TDrover);
@@ -245,7 +338,7 @@ begin
   if AEnable and FClosePending then
     exit;
 
-  if not FDrover.IsElevated then
+  if not IsProcessElevated then
   begin
     if RunAsAdminSelf(FlagsToCmdLine([afTun, afElevatedRestart]), Handle) then
       Close;

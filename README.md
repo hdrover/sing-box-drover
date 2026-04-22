@@ -37,9 +37,8 @@ top.
 
 ## Not implemented
 
-- No profile/config switching inside the program: only one sing-box config file is used (path is set in the program
-  config).
-- No built-in autostart manager (see the Autostart section below).
+- No profile/config switching: only one sing-box config file is used (path is set in the program config).
+- No Clash Mode switcher.
 
 ## Installation
 
@@ -168,18 +167,6 @@ Parameters:
     - `nested` — each selector is shown as a submenu containing its options.
 
 The rest of the behavior is fully controlled by your sing-box configuration.
-
-## Autostart
-
-sing-box-drover does not have built-in autostart management.
-
-If you want the program to start automatically with Windows:
-
-1. Press **Win + R**.
-2. Enter `shell:startup` and press **Enter**.
-3. In the opened folder, create a shortcut to `sing-box-drover.exe`.
-
-Windows will then launch sing-box-drover automatically at logon.
 
 ## BPF profiles
 

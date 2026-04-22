@@ -3,10 +3,10 @@ unit AppArgs;
 interface
 
 type
-  TAppFlag = (afTun, afElevatedRestart);
+  TAppFlag = (afTun, afElevatedRestart, afAutostartEnable, afAutostartDisable);
   TAppFlags = set of TAppFlag;
 
-function ParseAppFlags: TAppFlags;
+function GetAppFlags: TAppFlags;
 function FlagsToCmdLine(const flags: TAppFlags): string;
 
 implementation
@@ -15,7 +15,10 @@ uses
   System.SysUtils;
 
 const
-  FlagSwitches: array [TAppFlag] of string = ('tun', 'elevated-restart');
+  FlagSwitches: array [TAppFlag] of string = ('tun', 'elevated-restart', 'autostart-enable', 'autostart-disable');
+
+var
+  GAppFlags: TAppFlags;
 
 function ParseAppFlags: TAppFlags;
 var
@@ -25,6 +28,11 @@ begin
   for flag := Low(TAppFlag) to High(TAppFlag) do
     if FindCmdLineSwitch(FlagSwitches[flag]) then
       Include(result, flag);
+end;
+
+function GetAppFlags: TAppFlags;
+begin
+  result := GAppFlags;
 end;
 
 function FlagsToCmdLine(const flags: TAppFlags): string;
@@ -40,5 +48,9 @@ begin
       result := result + '-' + FlagSwitches[flag];
     end;
 end;
+
+initialization
+
+GAppFlags := ParseAppFlags;
 
 end.

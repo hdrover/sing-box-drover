@@ -22,7 +22,8 @@ uses
   SingBoxBpf in 'SingBoxBpf.pas',
   ConfigReader in 'ConfigReader.pas',
   ConfigUpdater in 'ConfigUpdater.pas',
-  ElevatedTrayIcon in 'ElevatedTrayIcon.pas';
+  ElevatedTrayIcon in 'ElevatedTrayIcon.pas',
+  Autostart in 'Autostart.pas';
 
 {$R *.res}
 
@@ -36,7 +37,7 @@ var
 
 begin
   try
-    flags := ParseAppFlags;
+    flags := GetAppFlags;
 
     if not AcquireSingleInstance('SingBoxDrover_SingleInstance_Mutex', afElevatedRestart in flags) then
       raise Exception.Create('Another instance of this application is already running.');
