@@ -8,7 +8,7 @@ uses
   System.SysUtils;
 
 function IsProcessElevated: boolean;
-function RunAsAdminSelf(const params: string; ownerWnd: HWND = 0): boolean;
+function LaunchSelf(const params: string; ownerWnd: HWND = 0; elevate: boolean = true): boolean;
 
 implementation
 
@@ -48,15 +48,21 @@ begin
   result := elevated;
 end;
 
-function RunAsAdminSelf(const params: string; ownerWnd: HWND = 0): boolean;
+function LaunchSelf(const params: string; ownerWnd: HWND = 0; elevate: boolean = true): boolean;
 var
   sei: TShellExecuteInfo;
+  verb: string;
 begin
+  if elevate then
+    verb := 'runas'
+  else
+    verb := 'open';
+
   ZeroMemory(@sei, SizeOf(sei));
   sei.cbSize := SizeOf(sei);
   sei.fMask := SEE_MASK_NOASYNC;
   sei.Wnd := ownerWnd;
-  sei.lpVerb := PChar('runas');
+  sei.lpVerb := PChar(verb);
   sei.lpFile := PChar(ParamStr(0));
   sei.lpParameters := PChar(params);
   sei.lpDirectory := PChar(ExtractFileDir(ParamStr(0)));

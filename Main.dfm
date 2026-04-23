@@ -23,6 +23,10 @@ object frmMain: TfrmMain
     Top = 40
     object miExtras: TMenuItem
       Caption = 'Extras'
+      object miRestart: TMenuItem
+        Caption = 'Restart'
+        OnClick = miRestartClick
+      end
       object miAutostart: TMenuItem
         Caption = 'Autostart'
         Enabled = False

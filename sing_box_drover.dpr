@@ -39,7 +39,7 @@ begin
   try
     flags := GetAppFlags;
 
-    if not AcquireSingleInstance('SingBoxDrover_SingleInstance_Mutex', afElevatedRestart in flags) then
+    if not AcquireSingleInstance('SingBoxDrover_SingleInstance_Mutex', afRestart in flags) then
       raise Exception.Create('Another instance of this application is already running.');
 
     Drover := TDrover.Create(flags);

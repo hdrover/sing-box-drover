@@ -17,6 +17,7 @@ type
     miTun: TMenuItem;
     miExtras: TMenuItem;
     miAutostart: TMenuItem;
+    miRestart: TMenuItem;
     miHomepage: TMenuItem;
     procedure FormCloseQuery(Sender: TObject; var CanClose: boolean);
     procedure miQuitClick(Sender: TObject);
@@ -27,6 +28,7 @@ type
     procedure FormCreate(Sender: TObject);
     procedure miTunClick(Sender: TObject);
     procedure miAutostartClick(Sender: TObject);
+    procedure miRestartClick(Sender: TObject);
     procedure miHomepageClick(Sender: TObject);
   private
     TrayIcon: TElevatedTrayIcon;
@@ -144,7 +146,7 @@ begin
 
   if not IsProcessElevated then
   begin
-    if RunAsAdminSelf(FlagsToCmdLine([flag, afElevatedRestart]), Handle) then
+    if LaunchSelf(FlagsToCmdLine([flag, afRestart]), Handle) then
       Close;
     exit;
   end;
@@ -155,6 +157,21 @@ end;
 procedure TfrmMain.miHomepageClick(Sender: TObject);
 begin
   ShellExecute(0, 'open', 'https://github.com/hdrover/sing-box-drover', nil, nil, SW_SHOWNORMAL);
+end;
+
+procedure TfrmMain.miRestartClick(Sender: TObject);
+var
+  flags: TAppFlags;
+begin
+  if FClosePending then
+    exit;
+
+  flags := [afRestart];
+  if FIsTunActive then
+    Include(flags, afTun);
+
+  if LaunchSelf(FlagsToCmdLine(flags), Handle, IsProcessElevated) then
+    Close;
 end;
 
 procedure TfrmMain.InitDrover(ADrover: TDrover);
@@ -340,7 +357,7 @@ begin
 
   if not IsProcessElevated then
   begin
-    if RunAsAdminSelf(FlagsToCmdLine([afTun, afElevatedRestart]), Handle) then
+    if LaunchSelf(FlagsToCmdLine([afTun, afRestart]), Handle) then
       Close;
     exit;
   end;

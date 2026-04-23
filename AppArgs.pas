@@ -3,7 +3,7 @@ unit AppArgs;
 interface
 
 type
-  TAppFlag = (afTun, afElevatedRestart, afAutostartEnable, afAutostartDisable);
+  TAppFlag = (afTun, afRestart, afAutostartEnable, afAutostartDisable);
   TAppFlags = set of TAppFlag;
 
 function GetAppFlags: TAppFlags;
@@ -15,7 +15,7 @@ uses
   System.SysUtils;
 
 const
-  FlagSwitches: array [TAppFlag] of string = ('tun', 'elevated-restart', 'autostart-enable', 'autostart-disable');
+  FlagSwitches: array [TAppFlag] of string = ('tun', 'restart', 'autostart-enable', 'autostart-disable');
 
 var
   GAppFlags: TAppFlags;
