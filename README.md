@@ -142,8 +142,8 @@ sb-dir =
 sb-config-file = config.json
 tun-start-mode = off
 system-proxy-auto = 1
-; Selector menu layout: "flat" or "nested"
-selector-menu-layout = flat
+; Selector menu layout: "auto", "flat" or "nested"
+selector-menu-layout = auto
 ```
 
 Parameters:
@@ -163,6 +163,7 @@ Parameters:
     - `0` — manual toggling only.
 
 - `selector-menu-layout` — layout of selectors in the tray menu:
+    - `auto` — picks `nested` when there are many items, otherwise `flat`.
     - `flat` — each selector name is shown as a disabled header, with its options as radio items below, separated by a divider.
     - `nested` — each selector is shown as a submenu containing its options.
 

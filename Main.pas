@@ -221,12 +221,15 @@ begin
 end;
 
 procedure TfrmMain.DrawSelectors;
+const
+  AUTO_FLAT_ROWS_THRESHOLD = 20;
 var
   selectors: TConfigSelectors;
   selector: TConfigSelector;
   outboundName: string;
   popupItems, selectorItem, outboundItem: TMenuItem;
   insertIndex, selectorCount, selectorI, outboundI: integer;
+  flatRows: integer;
   isNested: boolean;
   itemOwner: TComponent;
 begin
@@ -235,7 +238,17 @@ begin
   if (selectorCount < 1) or (selectorCount > 50) then
     exit;
 
-  isNested := FDrover.Options.selectorMenuLayout = 'nested';
+  case FDrover.Options.selectorMenuLayout of
+    smlFlat:
+      isNested := false;
+    smlNested:
+      isNested := true;
+  else
+    flatRows := 2 * selectorCount;
+    for selectorI := Low(selectors) to High(selectors) do
+      Inc(flatRows, Length(selectors[selectorI].outbounds));
+    isNested := flatRows > AUTO_FLAT_ROWS_THRESHOLD;
+  end;
 
   popupItems := PopupMenu.Items;
   insertIndex := popupItems.IndexOf(miBeforeSelectors) + 1;

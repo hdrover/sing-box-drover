@@ -14,29 +14,42 @@ const
 
 type
   TTunStartMode = (tsmOn, tsmOff);
+  TSelectorMenuLayout = (smlAuto, smlFlat, smlNested);
 
   TDroverOptions = record
     sbDir: string;
     sbConfigFile: string;
     systemProxyAuto: boolean;
     tunStartMode: TTunStartMode;
-    selectorMenuLayout: string;
+    selectorMenuLayout: TSelectorMenuLayout;
     logFile: string;
 
     class function Load(filename: string): TDroverOptions; static;
   private
     class function ParseTunStartMode(s: string): TTunStartMode; static;
+    class function ParseSelectorMenuLayout(s: string): TSelectorMenuLayout; static;
   end;
 
 implementation
 
 class function TDroverOptions.ParseTunStartMode(s: string): TTunStartMode;
 begin
-  s := Trim(LowerCase(s));
+  s := trim(LowerCase(s));
   if MatchStr(s, ['off', '0', '']) then
     exit(TTunStartMode.tsmOff)
   else
     exit(TTunStartMode.tsmOn);
+end;
+
+class function TDroverOptions.ParseSelectorMenuLayout(s: string): TSelectorMenuLayout;
+begin
+  s := trim(LowerCase(s));
+  if s = 'flat' then
+    exit(TSelectorMenuLayout.smlFlat)
+  else if s = 'nested' then
+    exit(TSelectorMenuLayout.smlNested)
+  else
+    exit(TSelectorMenuLayout.smlAuto);
 end;
 
 class function TDroverOptions.Load(filename: string): TDroverOptions;
@@ -76,7 +89,7 @@ begin
 
         result.tunStartMode := ParseTunStartMode(ReadString(SECTION_MAIN, 'tun-start-mode', ''));
         result.systemProxyAuto := ReadBool(SECTION_MAIN, 'system-proxy-auto', false);
-        result.selectorMenuLayout := ReadString(SECTION_MAIN, 'selector-menu-layout', '');
+        result.selectorMenuLayout := ParseSelectorMenuLayout(ReadString(SECTION_MAIN, 'selector-menu-layout', ''));
 
         s := ReadString(SECTION_MAIN, 'log-file', '');
         if (s <> '') and (not s.Contains(':')) then
