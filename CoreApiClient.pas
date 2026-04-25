@@ -119,7 +119,7 @@ end;
 
 procedure TCoreApiClient.Log(const AMessage: string);
 begin
-  FLogger.Log('[API] ' + AMessage);
+  FLogger.Log('API', AMessage);
 end;
 
 end.

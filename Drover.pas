@@ -6,8 +6,8 @@ uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes,
   Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.ExtCtrls, Vcl.Menus, SystemProxy,
   System.JSON, System.IOUtils, System.Generics.Collections, Options,
-  CoreSupervisor, Logger, AppElevation, AppArgs, SingBoxConfig, ConfigReader,
-  ConfigUpdater;
+  CoreSupervisor, Logger, AppElevation, AppArgs, SingBoxConfig, SingBoxCli,
+  ConfigReader, ConfigUpdater;
 
 const
   WM_DROVER_CAN_CLOSE = WM_APP + 501;
@@ -26,6 +26,7 @@ type
   private
     FSupervisor: TCoreSupervisor;
     FConfigUpdater: TConfigUpdater;
+    FSingBoxCli: TSingBoxCli;
     FOnEvent: TDroverEventHandler;
     FLogger: TLogger;
     FNotifyHandle: HWND;
@@ -101,6 +102,8 @@ begin
   if not TFile.Exists(corePath) then
     raise Exception.Create('sing-box executable not found.');
 
+  FSingBoxCli := TSingBoxCli.Create(corePath, FLogger);
+
   FSupervisor := TCoreSupervisor.Create(corePath, FLogger, sbConfig.clashApi);
   FSupervisor.OnEvent := HandleCoreEvent;
   FSupervisor.OnTerminate := HandleWorkerTerminated;
@@ -108,7 +111,7 @@ begin
 
   if configSource.isBpf and configSource.bpfProfile.isRemote and configSource.bpfProfile.autoUpdate then
   begin
-    FConfigUpdater := TConfigUpdater.Create(configSource, FLogger);
+    FConfigUpdater := TConfigUpdater.Create(configSource, FSingBoxCli, FLogger);
     FConfigUpdater.OnTerminate := HandleWorkerTerminated;
   end;
 end;
@@ -120,6 +123,7 @@ begin
   DestroyConfigUpdater;
   DestroySupervisor;
 
+  FreeAndNil(FSingBoxCli);
   FreeAndNil(FPendingEvents);
   FreeAndNil(FLogger);
 

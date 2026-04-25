@@ -23,7 +23,8 @@ uses
   ConfigReader in 'ConfigReader.pas',
   ConfigUpdater in 'ConfigUpdater.pas',
   ElevatedTrayIcon in 'ElevatedTrayIcon.pas',
-  Autostart in 'Autostart.pas';
+  Autostart in 'Autostart.pas',
+  SingBoxCli in 'SingBoxCli.pas';
 
 {$R *.res}
 

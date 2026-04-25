@@ -16,7 +16,7 @@ type
   public
     constructor Create(AFilePath: string);
     destructor Destroy; override;
-    procedure Log(AMessage: string);
+    procedure Log(const ASection, AMessage: string);
     procedure Close;
   end;
 
@@ -70,9 +70,9 @@ begin
   end;
 end;
 
-procedure TLogger.Log(AMessage: string);
+procedure TLogger.Log(const ASection, AMessage: string);
 var
-  line: string;
+  line, prefix: string;
 begin
   if not FIsOpen then
     exit;
@@ -81,7 +81,11 @@ begin
   try
     if not FIsOpen then
       exit;
-    line := FormatDateTime('yyyy-mm-dd hh:nn:ss.zzz', Now) + ' ' + AMessage;
+    if ASection <> '' then
+      prefix := '[' + ASection + '] '
+    else
+      prefix := '';
+    line := FormatDateTime('yyyy-mm-dd hh:nn:ss.zzz', Now) + ' ' + prefix + AMessage;
     try
       Writeln(FFile, line);
       Flush(FFile);

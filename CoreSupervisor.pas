@@ -514,7 +514,7 @@ end;
 
 procedure TCoreSupervisor.Log(const AMessage: string);
 begin
-  FLogger.Log('[Core] ' + AMessage);
+  FLogger.Log('Core', AMessage);
 end;
 
 function TCoreSupervisor.IsProcessRunning: boolean;

@@ -4,12 +4,13 @@ interface
 
 uses
   Winapi.Windows, System.SysUtils, System.Classes, System.SyncObjs,
-  System.Net.HttpClient, System.Net.URLClient, Logger, SingBoxConfig;
+  System.Net.HttpClient, System.Net.URLClient, Logger, SingBoxCli, SingBoxConfig;
 
 type
   TConfigUpdater = class(TThread)
   private
     FConfigSource: TConfigSource;
+    FSingBoxCli: TSingBoxCli;
     FLogger: TLogger;
     FStopEvent: TEvent;
     FRequest: IHTTPRequest;
@@ -17,6 +18,7 @@ type
 
     function ClampIntervalMs(AIntervalMinutes: int32): Cardinal;
     function GetCurrentProfileTimestamp: int64;
+    function BuildUserAgent: string;
     procedure ClearActiveRequest;
     procedure DoUpdate;
     procedure Log(const AMessage: string);
@@ -24,7 +26,7 @@ type
     procedure Execute; override;
     procedure TerminatedSet; override;
   public
-    constructor Create(const AConfigSource: TConfigSource; ALogger: TLogger);
+    constructor Create(const AConfigSource: TConfigSource; ASingBoxCli: TSingBoxCli; ALogger: TLogger);
     destructor Destroy; override;
   end;
 
@@ -43,9 +45,10 @@ const
   SEND_TIMEOUT_MS = 15000;
   RESPONSE_TIMEOUT_MS = 30000;
 
-constructor TConfigUpdater.Create(const AConfigSource: TConfigSource; ALogger: TLogger);
+constructor TConfigUpdater.Create(const AConfigSource: TConfigSource; ASingBoxCli: TSingBoxCli; ALogger: TLogger);
 begin
   FConfigSource := AConfigSource;
+  FSingBoxCli := ASingBoxCli;
   FLogger := ALogger;
 
   FStopEvent := TEvent.Create(nil, true, false, '');
@@ -110,6 +113,16 @@ begin
   end;
 end;
 
+function TConfigUpdater.BuildUserAgent: string;
+var
+  version: string;
+begin
+  result := 'sing-box-drover';
+  version := FSingBoxCli.GetVersion;
+  if version <> '' then
+    result := result + ' (sing-box ' + version + ')';
+end;
+
 procedure TConfigUpdater.DoUpdate;
 var
   http: THTTPClient;
@@ -126,7 +139,7 @@ begin
   try
     http := THTTPClient.Create;
     try
-      http.UserAgent := 'sing-box-drover';
+      http.UserAgent := BuildUserAgent;
       http.ConnectionTimeout := CONNECTION_TIMEOUT_MS;
       http.SendTimeout := SEND_TIMEOUT_MS;
       http.ResponseTimeout := RESPONSE_TIMEOUT_MS;
@@ -205,7 +218,7 @@ end;
 
 procedure TConfigUpdater.Log(const AMessage: string);
 begin
-  FLogger.Log('[ConfigUpdater] ' + AMessage);
+  FLogger.Log('ConfigUpdater', AMessage);
 end;
 
 end.
