@@ -188,7 +188,7 @@ procedure TCoreSupervisor.SetStateAndNotify(state: TCoreState; msg: string);
 var
   event: TCoreEvent;
 begin
-  Log(Trim(Format('State: %s. %s', [STATE_NAMES[state], msg])));
+  Log(trim(Format('State: %s. %s', [STATE_NAMES[state], msg])));
 
   FState := state;
 
@@ -523,6 +523,8 @@ begin
 end;
 
 procedure TCoreSupervisor.DoSetSelectors(tasks: TSelectorTasks);
+const
+  CONNECTIONS_FLUSH_TIMEOUT = 2000;
 var
   task: TSelectorTask;
   event: TCoreEvent;
@@ -530,21 +532,25 @@ var
 begin
   try
     for task in tasks do
-    begin
       FCoreApiClient.SendClashApiRequest('PUT', '/proxies/' + task.name, '{"name":"' + task.value + '"}');
-    end;
-
-    FCoreApiClient.SendClashApiRequest('DELETE', '/connections', '');
   except
     on E: Exception do
     begin
       s := 'Selector update failed.';
-      Log(s);
+      Log(s + ' ' + E.Message);
 
       event.kind := cekError;
       event.msg := s;
       NotifyEvent(event);
+      exit;
     end;
+  end;
+
+  try
+    FCoreApiClient.SendClashApiRequest('DELETE', '/connections', '', CONNECTIONS_FLUSH_TIMEOUT);
+  except
+    on E: Exception do
+      Log('Connections flush failed. ' + E.Message);
   end;
 end;
 

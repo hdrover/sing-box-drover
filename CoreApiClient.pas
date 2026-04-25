@@ -3,8 +3,8 @@ unit CoreApiClient;
 interface
 
 uses
-  System.SysUtils, System.Classes, System.Generics.Collections, SingBoxConfig,
-  System.Net.HttpClient, System.Net.URLClient, Logger;
+  Winapi.Windows, System.SysUtils, System.Classes, System.Generics.Collections,
+  SingBoxConfig, System.Net.HttpClient, System.Net.URLClient, Logger;
 
 type
   TCoreApiClient = class
@@ -20,7 +20,7 @@ type
 
     function IsConfigured: boolean;
     function CheckReady: boolean;
-    procedure SendClashApiRequest(method, path, data: string);
+    procedure SendClashApiRequest(method, path, data: string; timeoutMs: integer = 1000);
   end;
 
 implementation
@@ -66,13 +66,16 @@ begin
   end;
 end;
 
-procedure TCoreApiClient.SendClashApiRequest(method, path, data: string);
+procedure TCoreApiClient.SendClashApiRequest(method, path, data: string; timeoutMs: integer);
 var
   client: THTTPClient;
   body: TStringStream;
   headers: TNetHeaders;
   url: string;
   response: IHTTPResponse;
+  startTick: UInt64;
+  elapsedMs: UInt64;
+  requestInfo: string;
 begin
   if not IsConfigured then
     raise Exception.Create('Clash API is not configured.');
@@ -81,9 +84,9 @@ begin
 
   client := FHttpClient;
 
-  client.ConnectionTimeout := 1000;
-  client.SendTimeout := 1000;
-  client.ResponseTimeout := 1000;
+  client.ConnectionTimeout := timeoutMs;
+  client.SendTimeout := timeoutMs;
+  client.ResponseTimeout := timeoutMs;
 
   body := TStringStream.Create(data, TEncoding.UTF8);
   try
@@ -93,25 +96,37 @@ begin
     headers[1].name := 'Content-Type';
     headers[1].value := 'application/json';
 
-    if SameText(method, 'GET') then
-    begin
-      response := client.Get(url, nil, headers);
-    end
-    else if SameText(method, 'PUT') then
-    begin
-      response := client.Put(url, body, nil, headers);
-    end
-    else if SameText(method, 'DELETE') then
-    begin
-      response := client.Delete(url, nil, headers);
-    end
-    else
-    begin
-      raise Exception.Create('Invalid method.');
-    end;
+    startTick := GetTickCount64;
+    try
+      if SameText(method, 'GET') then
+      begin
+        response := client.Get(url, nil, headers);
+      end
+      else if SameText(method, 'PUT') then
+      begin
+        response := client.Put(url, body, nil, headers);
+      end
+      else if SameText(method, 'DELETE') then
+      begin
+        response := client.Delete(url, nil, headers);
+      end
+      else
+      begin
+        raise Exception.Create('Invalid method.');
+      end;
 
-    if response.StatusCode div 100 <> 2 then
-      raise Exception.CreateFmt('HTTP %d.', [response.StatusCode]);
+      if response.StatusCode div 100 <> 2 then
+        raise Exception.CreateFmt('HTTP %d.', [response.StatusCode]);
+    except
+      on E: Exception do
+      begin
+        elapsedMs := GetTickCount64 - startTick;
+        requestInfo := method + ' ' + path;
+        if data <> '' then
+          requestInfo := requestInfo + ' ' + data;
+        raise Exception.CreateFmt('%s after %d ms. [%s] %s', [requestInfo, elapsedMs, E.ClassName, trim(E.Message)]);
+      end;
+    end;
   finally
     body.Free;
   end;
