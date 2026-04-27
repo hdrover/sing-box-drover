@@ -1,4 +1,4 @@
-unit CoreSupervisor;
+﻿unit CoreSupervisor;
 
 interface
 
@@ -36,6 +36,28 @@ type
 
   TCoreEventHandler = procedure(event: TCoreEvent) of object;
 
+  TLogEntryKind = (lekNone, lekTrace, lekDebug, lekInfo, lekWarn, lekError, lekFatal, lekPanic);
+
+  TLogEntryKindPrefix = record
+    prefix: string;
+    kind: TLogEntryKind;
+  end;
+
+  TPipeReader = class(TThread)
+  private
+    FPipe: THandle;
+    FBuffer: TBytes;
+    FWrapped: boolean;
+    FLock: TCriticalSection;
+    procedure AppendBytes(const ABuffer: TBytes; ACount: integer);
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(APipe: THandle);
+    destructor Destroy; override;
+    function GetCapturedText: string;
+  end;
+
   TCoreSupervisor = class(TThread)
   private
     FLogger: TLogger;
@@ -44,6 +66,8 @@ type
     FJobHandle: THandle;
     FProcessHandle: THandle;
     FProcessId: DWORD;
+    FOutputReader: TPipeReader;
+    FLastCapturedOutput: string;
     FState: TCoreState;
     FExePath: string;
     FCoreApiClient: TCoreApiClient;
@@ -62,6 +86,8 @@ type
     procedure InitApiCheck;
     procedure CheckApiStatus;
     procedure CleanupProcess;
+    procedure DrainReader(var AReader: TPipeReader; out AOutput: string);
+    function BuildFailureMessage(const ABase, ACapturedOutput: string): string;
     procedure Log(const AMessage: string);
     function IsProcessRunning: boolean;
   protected
@@ -84,6 +110,219 @@ implementation
 const
   STATE_NAMES: array [TCoreState] of string = ('Stopped', 'Starting', 'Running', 'Stopping', 'Failed');
   COMMAND_NAMES: array [TCoreCommandKind] of string = ('None', 'Start', 'Stop', 'SetSelectors');
+  MAX_CAPTURE_BYTES = 8 * 1024;
+  READ_CHUNK_BYTES = 4 * 1024;
+  READER_DRAIN_TIMEOUT_MS = 5000;
+  POST_KILL_WAIT_MS = 1000;
+
+constructor TPipeReader.Create(APipe: THandle);
+begin
+  FPipe := APipe;
+  FLock := TCriticalSection.Create;
+  SetLength(FBuffer, 0);
+  FWrapped := false;
+  FreeOnTerminate := false;
+  inherited Create(false);
+end;
+
+destructor TPipeReader.Destroy;
+begin
+  if (FPipe <> 0) and (FPipe <> INVALID_HANDLE_VALUE) then
+    CloseHandle(FPipe);
+  FPipe := 0;
+  inherited;
+  FreeAndNil(FLock);
+end;
+
+procedure TPipeReader.Execute;
+var
+  buf: TBytes;
+  bytesRead: DWORD;
+begin
+  SetLength(buf, READ_CHUNK_BYTES);
+  while not Terminated do
+  begin
+    bytesRead := 0;
+    if not ReadFile(FPipe, buf[0], READ_CHUNK_BYTES, bytesRead, nil) then
+      break;
+    if bytesRead = 0 then
+      break;
+    AppendBytes(buf, integer(bytesRead));
+  end;
+end;
+
+procedure TPipeReader.AppendBytes(const ABuffer: TBytes; ACount: integer);
+var
+  oldLen, newLen, keep: integer;
+begin
+  if ACount <= 0 then
+    exit;
+
+  FLock.Enter;
+  try
+    if ACount >= MAX_CAPTURE_BYTES then
+    begin
+      SetLength(FBuffer, MAX_CAPTURE_BYTES);
+      move(ABuffer[ACount - MAX_CAPTURE_BYTES], FBuffer[0], MAX_CAPTURE_BYTES);
+      FWrapped := true;
+      exit;
+    end;
+
+    oldLen := Length(FBuffer);
+    newLen := oldLen + ACount;
+
+    if newLen <= MAX_CAPTURE_BYTES then
+    begin
+      SetLength(FBuffer, newLen);
+      move(ABuffer[0], FBuffer[oldLen], ACount);
+    end
+    else
+    begin
+      keep := MAX_CAPTURE_BYTES - ACount;
+      move(FBuffer[oldLen - keep], FBuffer[0], keep);
+      SetLength(FBuffer, MAX_CAPTURE_BYTES);
+      move(ABuffer[0], FBuffer[keep], ACount);
+      FWrapped := true;
+    end;
+  finally
+    FLock.Leave;
+  end;
+end;
+
+function TPipeReader.GetCapturedText: string;
+var
+  snapshot: TBytes;
+  startIdx, endIdx, i: integer;
+  wrapped: boolean;
+begin
+  result := '';
+
+  FLock.Enter;
+  try
+    SetLength(snapshot, Length(FBuffer));
+    if Length(snapshot) > 0 then
+      move(FBuffer[0], snapshot[0], Length(snapshot));
+    wrapped := FWrapped;
+  finally
+    FLock.Leave;
+  end;
+
+  if Length(snapshot) = 0 then
+    exit;
+
+  endIdx := -1;
+  for i := High(snapshot) downto 0 do
+    if snapshot[i] = $0A then
+    begin
+      endIdx := i;
+      break;
+    end;
+  if endIdx < 0 then
+    exit;
+
+  startIdx := 0;
+  if wrapped then
+  begin
+    for i := 0 to endIdx do
+      if snapshot[i] = $0A then
+      begin
+        startIdx := i + 1;
+        break;
+      end;
+    if startIdx > endIdx then
+      exit;
+  end;
+
+  try
+    result := TEncoding.UTF8.GetString(snapshot, startIdx, endIdx - startIdx + 1);
+  except
+    result := '';
+    exit;
+  end;
+
+  result := trim(result);
+end;
+
+function StripSingBoxTimestamp(const line: string): string;
+begin
+  if (Length(line) >= 27) and ((line[1] = '+') or (line[1] = '-')) and (line[6] = ' ') and (line[11] = '-') and
+    (line[14] = '-') and (line[17] = ' ') and (line[20] = ':') and (line[23] = ':') and (line[26] = ' ') then
+    result := Copy(line, 27, MaxInt)
+  else
+    result := line;
+end;
+
+function ClassifyLogEntry(const line: string): TLogEntryKind;
+const
+  LEVELS: array [0 .. 6] of TLogEntryKindPrefix = ((prefix: 'TRACE'; kind: lekTrace), (prefix: 'DEBUG'; kind: lekDebug),
+    (prefix: 'INFO'; kind: lekInfo), (prefix: 'WARN'; kind: lekWarn), (prefix: 'ERROR'; kind: lekError),
+    (prefix: 'FATAL'; kind: lekFatal), (prefix: 'PANIC'; kind: lekPanic));
+var
+  rest: string;
+  i: integer;
+begin
+  if line.StartsWith('panic:') then
+    exit(lekPanic);
+  if line.StartsWith('fatal error:') then
+    exit(lekFatal);
+
+  rest := StripSingBoxTimestamp(line);
+
+  for i := low(LEVELS) to high(LEVELS) do
+    if rest.StartsWith(LEVELS[i].prefix + '[') or rest.StartsWith(LEVELS[i].prefix + ' ') then
+      exit(LEVELS[i].kind);
+
+  result := lekNone;
+end;
+
+function ExtractCriticalError(const captured: string): string;
+const
+  MAX_RESULT_CHARS = 2000;
+var
+  lines: TArray<string>;
+  i, lastIdx: integer;
+  lastKind: TLogEntryKind;
+  builder: TStringBuilder;
+begin
+  result := '';
+  if captured = '' then
+    exit;
+
+  lines := captured.Split([#10], TStringSplitOptions.None);
+  for i := 0 to High(lines) do
+    if (lines[i] <> '') and (lines[i][Length(lines[i])] = #13) then
+      SetLength(lines[i], Length(lines[i]) - 1);
+
+  lastIdx := -1;
+  lastKind := lekNone;
+  for i := High(lines) downto Low(lines) do
+  begin
+    lastKind := ClassifyLogEntry(lines[i]);
+    if lastKind <> lekNone then
+    begin
+      lastIdx := i;
+      break;
+    end;
+  end;
+
+  if not(lastKind in [lekFatal, lekPanic]) then
+    exit;
+
+  builder := TStringBuilder.Create;
+  try
+    builder.Append(StripSingBoxTimestamp(lines[lastIdx]));
+    for i := lastIdx + 1 to High(lines) do
+    begin
+      builder.AppendLine;
+      builder.Append(lines[i]);
+      if builder.Length > MAX_RESULT_CHARS then
+        break;
+    end;
+    result := builder.ToString;
+  finally
+    builder.Free;
+  end;
+end;
 
 constructor TCoreSupervisor.Create(AExePath: string; ALogger: TLogger; AClashApiConfig: TClashApiConfig);
 begin
@@ -93,6 +332,8 @@ begin
   FJobHandle := 0;
   FProcessHandle := 0;
   FProcessId := 0;
+  FOutputReader := nil;
+  FLastCapturedOutput := '';
   FState := csStopped;
   FExePath := AExePath;
   FApiCheckActive := false;
@@ -151,19 +392,61 @@ end;
 
 procedure TCoreSupervisor.CleanupProcess;
 begin
-  if FProcessHandle <> 0 then
-  begin
-    CloseHandle(FProcessHandle);
-    FProcessHandle := 0;
-  end;
-
   if FJobHandle <> 0 then
   begin
     CloseHandle(FJobHandle);
     FJobHandle := 0;
   end;
 
+  if FProcessHandle <> 0 then
+  begin
+    CloseHandle(FProcessHandle);
+    FProcessHandle := 0;
+  end;
+
   FProcessId := 0;
+
+  DrainReader(FOutputReader, FLastCapturedOutput);
+end;
+
+procedure TCoreSupervisor.DrainReader(var AReader: TPipeReader; out AOutput: string);
+var
+  drained: boolean;
+begin
+  AOutput := '';
+  if not Assigned(AReader) then
+    exit;
+
+  drained := WaitForSingleObject(AReader.Handle, READER_DRAIN_TIMEOUT_MS) = WAIT_OBJECT_0;
+  if not drained then
+  begin
+    Log('Output reader did not exit, cancelling I/O.');
+    CancelSynchronousIo(AReader.Handle);
+    drained := WaitForSingleObject(AReader.Handle, POST_KILL_WAIT_MS) = WAIT_OBJECT_0;
+  end;
+
+  AOutput := AReader.GetCapturedText;
+
+  if drained then
+    FreeAndNil(AReader)
+  else
+  begin
+    Log('Output reader still blocked; leaking it to keep supervisor responsive.');
+    AReader := nil;
+  end;
+end;
+
+function TCoreSupervisor.BuildFailureMessage(const ABase, ACapturedOutput: string): string;
+var
+  critical: string;
+begin
+  result := ABase;
+  if ACapturedOutput = '' then
+    exit;
+
+  critical := ExtractCriticalError(ACapturedOutput);
+  if critical <> '' then
+    result := result + sLineBreak + critical;
 end;
 
 procedure TCoreSupervisor.NotifyEvent(AEvent: TCoreEvent);
@@ -283,9 +566,11 @@ var
   cmdLine, workDir: string;
   secAttr: TSecurityAttributes;
   stdinReadPipe, stdinWritePipe: THandle;
-  hNullOut: THandle;
+  outReadPipe, outWritePipe, readerPipe: THandle;
+  reader: TPipeReader;
   configBytes: TBytes;
   resumeResult: DWORD;
+  capturedOutput: string;
 begin
   DoStopGraceful;
 
@@ -299,7 +584,9 @@ begin
 
   stdinReadPipe := 0;
   stdinWritePipe := 0;
-  hNullOut := 0;
+  outReadPipe := 0;
+  outWritePipe := 0;
+  reader := nil;
 
   try
     if not TFile.Exists(exePath) then
@@ -321,15 +608,16 @@ begin
     secAttr.lpSecurityDescriptor := nil;
 
     if not CreatePipe(stdinReadPipe, stdinWritePipe, @secAttr, 0) then
-      raise Exception.Create('CreatePipe failed.');
+      raise Exception.Create('CreatePipe (stdin) failed.');
 
     if not SetHandleInformation(stdinWritePipe, HANDLE_FLAG_INHERIT, 0) then
-      raise Exception.Create('SetHandleInformation failed.');
+      raise Exception.Create('SetHandleInformation (stdin) failed.');
 
-    hNullOut := CreateFile('NUL', GENERIC_WRITE, FILE_SHARE_READ or FILE_SHARE_WRITE, @secAttr, OPEN_EXISTING,
-      FILE_ATTRIBUTE_NORMAL, 0);
-    if hNullOut = INVALID_HANDLE_VALUE then
-      raise Exception.Create('CreateFile (NUL) failed.');
+    if not CreatePipe(outReadPipe, outWritePipe, @secAttr, 0) then
+      raise Exception.Create('CreatePipe (output) failed.');
+
+    if not SetHandleInformation(outReadPipe, HANDLE_FLAG_INHERIT, 0) then
+      raise Exception.Create('SetHandleInformation (output) failed.');
 
     ZeroMemory(@si, SizeOf(si));
     ZeroMemory(@pi, SizeOf(pi));
@@ -337,10 +625,10 @@ begin
     si.dwFlags := STARTF_USESHOWWINDOW or STARTF_USESTDHANDLES;
     si.wShowWindow := SW_HIDE;
     si.hStdInput := stdinReadPipe;
-    si.hStdOutput := hNullOut;
-    si.hStdError := hNullOut;
+    si.hStdOutput := outWritePipe;
+    si.hStdError := outWritePipe;
 
-    cmdLine := Format('"%s" run -c stdin', [exePath]);
+    cmdLine := Format('"%s" --disable-color run -c stdin', [exePath]);
     workDir := ExtractFileDir(exePath);
 
     if not CreateProcess(nil, PChar(cmdLine), nil, nil, true, CREATE_NEW_CONSOLE or CREATE_SUSPENDED, nil,
@@ -352,10 +640,14 @@ begin
     processId := pi.dwProcessId;
 
     SafeCloseHandle(stdinReadPipe);
-    SafeCloseHandle(hNullOut);
+    SafeCloseHandle(outWritePipe);
 
     if not AssignProcessToJobObject(jobHandle, processHandle) then
       raise Exception.Create('AssignProcessToJobObject failed.');
+
+    readerPipe := outReadPipe;
+    outReadPipe := 0;
+    reader := TPipeReader.Create(readerPipe);
 
     resumeResult := ResumeThread(threadHandle);
     SafeCloseHandle(threadHandle);
@@ -365,31 +657,39 @@ begin
     configBytes := TEncoding.UTF8.GetBytes(configJson);
     WriteAllToHandle(stdinWritePipe, configBytes);
     SafeCloseHandle(stdinWritePipe);
-
-    FJobHandle := jobHandle;
-    FProcessHandle := processHandle;
-    FProcessId := processId;
-
-    Log(Format('Process created, PID: %d.', [processId]));
-
-    SetStateAndNotify(csRunning);
-    InitApiCheck;
   except
     on E: Exception do
     begin
       if processHandle <> 0 then
         TerminateProcess(processHandle, 1);
 
-      SafeCloseHandle(stdinReadPipe);
-      SafeCloseHandle(stdinWritePipe);
-      SafeCloseHandle(hNullOut);
-      SafeCloseHandle(processHandle);
-      SafeCloseHandle(threadHandle);
       SafeCloseHandle(jobHandle);
 
-      SetStateAndNotify(csFailed, E.Message);
+      SafeCloseHandle(stdinReadPipe);
+      SafeCloseHandle(stdinWritePipe);
+      SafeCloseHandle(outWritePipe);
+
+      DrainReader(reader, capturedOutput);
+
+      SafeCloseHandle(outReadPipe);
+
+      SafeCloseHandle(processHandle);
+      SafeCloseHandle(threadHandle);
+
+      SetStateAndNotify(csFailed, BuildFailureMessage(E.Message, capturedOutput));
+
+      exit;
     end;
   end;
+
+  FJobHandle := jobHandle;
+  FProcessHandle := processHandle;
+  FProcessId := processId;
+  FOutputReader := reader;
+
+  Log(Format('Process created, PID: %d.', [processId]));
+  SetStateAndNotify(csRunning);
+  InitApiCheck;
 end;
 
 function TCoreSupervisor.SendCtrlCToConsole(processId: DWORD): boolean;
@@ -448,7 +748,7 @@ begin
   if WaitForSingleObject(FProcessHandle, 0) <> WAIT_TIMEOUT then
   begin
     CleanupProcess;
-    SetStateAndNotify(csFailed, 'sing-box process exited unexpectedly.');
+    SetStateAndNotify(csFailed, BuildFailureMessage('sing-box process exited unexpectedly.', FLastCapturedOutput));
   end;
 end;
 
