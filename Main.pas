@@ -6,9 +6,11 @@ uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes, Vcl.Graphics,
   Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.ExtCtrls, Vcl.Menus, System.Net.HttpClient,
   System.Net.URLClient, System.JSON, System.IOUtils, System.Generics.Collections, Options, Drover,
-  AppElevation, AppArgs, SingBoxConfig, ElevatedTrayIcon, Autostart, Winapi.ShellAPI;
+  AppElevation, AppArgs, SingBoxConfig, ElevatedTrayIcon, Autostart, Winapi.ShellAPI, CoreSupervisor;
 
 type
+  TPendingSelectorRequests = TDictionary<NativeInt, TMenuItem>;
+
   TfrmMain = class(TForm)
     PopupMenu: TPopupMenu;
     miQuit: TMenuItem;
@@ -36,7 +38,10 @@ type
     FIsTunActive: boolean;
     FIsSystemProxyActive: boolean;
     FClosePending: boolean;
+    FLastRequestId: NativeInt;
+    FPendingSelectorRequests: TPendingSelectorRequests;
 
+    function NewRequestId: NativeInt;
     procedure UpdateTrayIcon;
     procedure ToggleSystemProxy(AEnable: boolean; AUpdateTrayIcon: boolean = true);
     procedure ToggleTunDisplay(AActive: boolean; AUpdateTrayIcon: boolean = true);
@@ -51,6 +56,7 @@ type
     procedure HandleAutostartResult(const r: TAutostartResult);
   public
 
+    destructor Destroy; override;
     procedure InitDrover(ADrover: TDrover);
   end;
 
@@ -66,6 +72,8 @@ begin
   FIsTunActive := false;
   FIsSystemProxyActive := false;
   FClosePending := false;
+  FLastRequestId := 0;
+  FPendingSelectorRequests := TPendingSelectorRequests.Create;
 
   miTun.Enabled := false;
   miTun.Visible := false;
@@ -75,6 +83,18 @@ begin
   TrayIcon.OnClick := TrayIconClick;
 
   InitAutostart;
+end;
+
+destructor TfrmMain.Destroy;
+begin
+  FreeAndNil(FPendingSelectorRequests);
+  inherited;
+end;
+
+function TfrmMain.NewRequestId: NativeInt;
+begin
+  inc(FLastRequestId);
+  result := FLastRequestId;
 end;
 
 procedure TfrmMain.InitAutostart;
@@ -195,6 +215,9 @@ begin
 end;
 
 procedure TfrmMain.HandleDroverEvent(event: TDroverEvent);
+var
+  pendingItem: TMenuItem;
+  coreEvent: TCoreEvent;
 begin
   case event.kind of
     dekError:
@@ -204,6 +227,19 @@ begin
       begin
         ToggleTunDisplay(FDrover.IsTunActive);
         miTun.Enabled := true;
+      end;
+
+    dekCoreEvent:
+      begin
+        coreEvent := event.coreEvent;
+        case coreEvent.kind of
+          cekSelectorDone:
+            if FPendingSelectorRequests.TryGetValue(coreEvent.requestId, pendingItem) then
+            begin
+              FPendingSelectorRequests.Remove(coreEvent.requestId);
+              pendingItem.Enabled := true;
+            end;
+        end;
       end;
   end;
 end;
@@ -246,7 +282,7 @@ begin
   else
     flatRows := 2 * selectorCount;
     for selectorI := Low(selectors) to High(selectors) do
-      Inc(flatRows, Length(selectors[selectorI].outbounds));
+      inc(flatRows, Length(selectors[selectorI].outbounds));
     isNested := flatRows > AUTO_FLAT_ROWS_THRESHOLD;
   end;
 
@@ -265,7 +301,7 @@ begin
     begin
       selectorItem.Enabled := false;
       popupItems.Insert(insertIndex, selectorItem);
-      Inc(insertIndex);
+      inc(insertIndex);
     end;
 
     outboundItem := nil;
@@ -294,20 +330,20 @@ begin
       else
       begin
         popupItems.Insert(insertIndex, outboundItem);
-        Inc(insertIndex);
+        inc(insertIndex);
       end;
     end;
 
     if (not isNested) and Assigned(outboundItem) then
     begin
       popupItems.InsertNewLineAfter(outboundItem);
-      Inc(insertIndex);
+      inc(insertIndex);
     end;
 
     if isNested then
     begin
       popupItems.Insert(insertIndex, selectorItem);
-      Inc(insertIndex);
+      inc(insertIndex);
     end;
   end;
 
@@ -436,6 +472,7 @@ var
   item: TMenuItem;
   i: integer;
   selectorI, outboundI: integer;
+  requestId: NativeInt;
 begin
   if not(Sender is TMenuItem) then
     exit;
@@ -448,7 +485,13 @@ begin
 
   item.Checked := true;
 
-  FDrover.EditSelector(selectorI, outboundI);
+  requestId := NewRequestId;
+
+  if not FDrover.EditSelector(selectorI, outboundI, requestId) then
+    exit;
+
+  FPendingSelectorRequests.Add(requestId, item);
+  item.Enabled := false;
 end;
 
 procedure TfrmMain.ShowOnlyExitInTray;

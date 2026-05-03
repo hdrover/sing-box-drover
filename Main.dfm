@@ -1,18 +1,23 @@
 object frmMain: TfrmMain
   Left = 0
   Top = 0
+  Margins.Left = 6
+  Margins.Top = 6
+  Margins.Right = 6
+  Margins.Bottom = 6
   Caption = 'sing-box-drover'
-  ClientHeight = 278
-  ClientWidth = 412
+  ClientHeight = 556
+  ClientWidth = 824
   Color = clBtnFace
   Font.Charset = DEFAULT_CHARSET
   Font.Color = clWindowText
-  Font.Height = -12
+  Font.Height = -24
   Font.Name = 'Segoe UI'
   Font.Style = []
   OnCloseQuery = FormCloseQuery
   OnCreate = FormCreate
-  TextHeight = 15
+  PixelsPerInch = 192
+  TextHeight = 32
   object PopupMenu: TPopupMenu
     Left = 248
     Top = 40

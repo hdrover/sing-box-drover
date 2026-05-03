@@ -13,11 +13,12 @@ const
   WM_DROVER_CAN_CLOSE = WM_APP + 501;
 
 type
-  TDroverEventKind = (dekError, dekRunning);
+  TDroverEventKind = (dekError, dekRunning, dekCoreEvent);
 
   TDroverEvent = record
     kind: TDroverEventKind;
     msg: string;
+    coreEvent: TCoreEvent;
   end;
 
   TDroverEventHandler = procedure(event: TDroverEvent) of object;
@@ -47,7 +48,9 @@ type
     function BackgroundWorkersFinished: boolean;
     procedure RequestShutdownWorkers;
     procedure TryCompleteShutdown;
-    procedure NotifyEvent(kind: TDroverEventKind; msg: string = '');
+    procedure NotifyEvent(kind: TDroverEventKind; msg: string = ''); overload;
+    procedure NotifyEvent(const event: TDroverEvent); overload;
+    procedure ForwardCoreEvent(const event: TCoreEvent);
     procedure SetOnEvent(value: TDroverEventHandler);
     procedure FlushPendingEvents;
     procedure DestroyConfigUpdater;
@@ -62,7 +65,7 @@ type
     destructor Destroy; override;
 
     procedure ResetSelectors;
-    procedure EditSelector(selectorIdx, outboundIdx: integer);
+    function EditSelector(selectorIdx, outboundIdx: integer; requestId: NativeInt): boolean;
     function EnableSystemProxy: boolean;
     function DisableSystemProxy: boolean;
     function Shutdown: boolean;
@@ -163,13 +166,29 @@ procedure TDrover.NotifyEvent(kind: TDroverEventKind; msg: string = '');
 var
   ev: TDroverEvent;
 begin
+  ev := Default (TDroverEvent);
   ev.kind := kind;
   ev.msg := msg;
 
+  NotifyEvent(ev);
+end;
+
+procedure TDrover.NotifyEvent(const event: TDroverEvent);
+begin
   if Assigned(FOnEvent) then
-    FOnEvent(ev)
+    FOnEvent(event)
   else
-    FPendingEvents.Add(ev);
+    FPendingEvents.Add(event);
+end;
+
+procedure TDrover.ForwardCoreEvent(const event: TCoreEvent);
+var
+  ev: TDroverEvent;
+begin
+  ev := Default (TDroverEvent);
+  ev.kind := dekCoreEvent;
+  ev.coreEvent := event;
+  NotifyEvent(ev);
 end;
 
 procedure TDrover.FlushPendingEvents;
@@ -238,6 +257,9 @@ begin
 
     cekApiReady:
       ResetSelectors;
+
+    cekSelectorDone:
+      ForwardCoreEvent(event);
   end;
 
 end;
@@ -285,14 +307,16 @@ begin
 
   SetLength(tasks, taskI);
 
-  FSupervisor.RequestSetSelectors(tasks);
+  FSupervisor.RequestSetSelectors(tasks, 0);
 end;
 
-procedure TDrover.EditSelector(selectorIdx, outboundIdx: integer);
+function TDrover.EditSelector(selectorIdx, outboundIdx: integer; requestId: NativeInt): boolean;
 var
   selector: TConfigSelector;
   task: TSelectorTask;
 begin
+  result := false;
+
   if (selectorIdx < Low(FSelectors)) or (selectorIdx > High(FSelectors)) then
     exit;
 
@@ -305,7 +329,7 @@ begin
   task.name := selector.name;
   task.value := selector.outbounds[outboundIdx];
 
-  FSupervisor.RequestSetSelectors([task]);
+  result := FSupervisor.RequestSetSelectors([task], requestId);
 end;
 
 function TDrover.EnableSystemProxy: boolean;

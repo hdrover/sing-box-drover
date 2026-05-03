@@ -16,12 +16,13 @@ type
 
   TCoreState = (csStopped, csStarting, csRunning, csStopping, csFailed);
 
-  TCoreEventKind = (cekState, cekError, cekApiReady);
+  TCoreEventKind = (cekState, cekError, cekApiReady, cekSelectorDone);
 
   TCoreEvent = record
     kind: TCoreEventKind;
     state: TCoreState;
     msg: string;
+    requestId: NativeInt;
   end;
 
   TCoreCommandKind = (cmdNone, cmdStart, cmdStop, cmdSetSelectors);
@@ -30,6 +31,7 @@ type
     kind: TCoreCommandKind;
     configJson: string;
     selectorTasks: TSelectorTasks;
+    requestId: NativeInt;
   end;
 
   TCoreCommandQueue = TThreadedQueue<TCoreCommand>;
@@ -81,7 +83,7 @@ type
     procedure DoStart(configJson: string);
     function SendCtrlCToConsole(processId: DWORD): boolean;
     procedure DoStopGraceful;
-    procedure DoSetSelectors(tasks: TSelectorTasks);
+    procedure DoSetSelectors(tasks: TSelectorTasks; requestId: NativeInt);
     procedure CheckProcessStatus;
     procedure InitApiCheck;
     procedure CheckApiStatus;
@@ -99,7 +101,7 @@ type
 
     procedure RequestStart(configJson: string);
     procedure RequestStop;
-    procedure RequestSetSelectors(tasks: TSelectorTasks);
+    function RequestSetSelectors(tasks: TSelectorTasks; requestId: NativeInt): boolean;
 
     property OnEvent: TCoreEventHandler read FOnEvent write FOnEvent;
     property state: TCoreState read FState;
@@ -327,7 +329,7 @@ end;
 constructor TCoreSupervisor.Create(AExePath: string; ALogger: TLogger; AClashApiConfig: TClashApiConfig);
 begin
   FLogger := ALogger;
-  FQueue := TCoreCommandQueue.Create(10, 200, 200);
+  FQueue := TCoreCommandQueue.Create(100, 200, 200);
   FCoreApiClient := TCoreApiClient.Create(AClashApiConfig, ALogger);
   FJobHandle := 0;
   FProcessHandle := 0;
@@ -471,10 +473,11 @@ procedure TCoreSupervisor.SetStateAndNotify(state: TCoreState; msg: string);
 var
   event: TCoreEvent;
 begin
-  Log(trim(Format('State: %s. %s', [STATE_NAMES[state], msg])));
+  Log(trim(format('State: %s. %s', [STATE_NAMES[state], msg])));
 
   FState := state;
 
+  event := Default (TCoreEvent);
   event.kind := cekState;
   event.state := state;
   event.msg := msg;
@@ -499,18 +502,19 @@ begin
   FQueue.PushItem(cmd);
 end;
 
-procedure TCoreSupervisor.RequestSetSelectors(tasks: TSelectorTasks);
+function TCoreSupervisor.RequestSetSelectors(tasks: TSelectorTasks; requestId: NativeInt): boolean;
 var
   cmd: TCoreCommand;
 begin
   cmd.kind := cmdSetSelectors;
   cmd.selectorTasks := tasks;
-  FQueue.PushItem(cmd);
+  cmd.requestId := requestId;
+  result := FQueue.PushItem(cmd) = wrSignaled;
 end;
 
 procedure TCoreSupervisor.HandleCommand(cmd: TCoreCommand);
 begin
-  Log(Format('Command: %s.', [COMMAND_NAMES[cmd.kind]]));
+  Log(format('Command: %s.', [COMMAND_NAMES[cmd.kind]]));
 
   case cmd.kind of
     cmdStart:
@@ -518,7 +522,7 @@ begin
     cmdStop:
       DoStopGraceful;
     cmdSetSelectors:
-      DoSetSelectors(cmd.selectorTasks);
+      DoSetSelectors(cmd.selectorTasks, cmd.requestId);
   end;
 end;
 
@@ -628,7 +632,7 @@ begin
     si.hStdOutput := outWritePipe;
     si.hStdError := outWritePipe;
 
-    cmdLine := Format('"%s" --disable-color run -c stdin', [exePath]);
+    cmdLine := format('"%s" --disable-color run -c stdin', [exePath]);
     workDir := ExtractFileDir(exePath);
 
     if not CreateProcess(nil, PChar(cmdLine), nil, nil, true, CREATE_NEW_CONSOLE or CREATE_SUSPENDED, nil,
@@ -687,7 +691,7 @@ begin
   FProcessId := processId;
   FOutputReader := reader;
 
-  Log(Format('Process created, PID: %d.', [processId]));
+  Log(format('Process created, PID: %d.', [processId]));
   SetStateAndNotify(csRunning);
   InitApiCheck;
 end;
@@ -806,8 +810,8 @@ begin
     Log('API ready.');
     FApiCheckActive := false;
 
+    event := Default (TCoreEvent);
     event.kind := cekApiReady;
-    event.msg := '';
     NotifyEvent(event);
   end;
 end;
@@ -822,35 +826,47 @@ begin
   result := FProcessHandle <> 0;
 end;
 
-procedure TCoreSupervisor.DoSetSelectors(tasks: TSelectorTasks);
+procedure TCoreSupervisor.DoSetSelectors(tasks: TSelectorTasks; requestId: NativeInt);
 const
   CONNECTIONS_FLUSH_TIMEOUT = 2000;
 var
   task: TSelectorTask;
   event: TCoreEvent;
-  s: string;
+  hasError: boolean;
 begin
-  try
-    for task in tasks do
-      FCoreApiClient.SendClashApiRequest('PUT', '/proxies/' + task.name, '{"name":"' + task.value + '"}');
-  except
-    on E: Exception do
-    begin
-      s := 'Selector update failed.';
-      Log(s + ' ' + E.Message);
+  hasError := false;
 
-      event.kind := cekError;
-      event.msg := s;
-      NotifyEvent(event);
-      exit;
+  for task in tasks do
+  begin
+    try
+      FCoreApiClient.SendClashApiRequest('PUT', '/proxies/' + task.name, '{"name":"' + task.value + '"}');
+    except
+      on E: Exception do
+      begin
+        hasError := true;
+        Log(trim(format('Selector update failed for "%s". %s', [task.name, E.Message])));
+      end;
     end;
   end;
+
+  if hasError then
+  begin
+    event := Default (TCoreEvent);
+    event.kind := cekError;
+    event.msg := 'Selector update failed.';
+    NotifyEvent(event);
+  end;
+
+  event := Default (TCoreEvent);
+  event.kind := cekSelectorDone;
+  event.requestId := requestId;
+  NotifyEvent(event);
 
   try
     FCoreApiClient.SendClashApiRequest('DELETE', '/connections', '', CONNECTIONS_FLUSH_TIMEOUT);
   except
     on E: Exception do
-      Log('Connections flush failed. ' + E.Message);
+      Log(trim('Connections flush failed. ' + E.Message));
   end;
 end;
 

@@ -85,7 +85,7 @@ begin
       prefix := '[' + ASection + '] '
     else
       prefix := '';
-    line := FormatDateTime('yyyy-mm-dd hh:nn:ss.zzz', Now) + ' ' + prefix + AMessage;
+    line := trim(FormatDateTime('yyyy-mm-dd hh:nn:ss.zzz', Now) + ' ' + prefix + AMessage);
     try
       Writeln(FFile, line);
       Flush(FFile);
