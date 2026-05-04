@@ -155,6 +155,7 @@
         <DCCReference Include="ElevatedTrayIcon.pas"/>
         <DCCReference Include="Autostart.pas"/>
         <DCCReference Include="SingBoxCli.pas"/>
+        <DCCReference Include="AppState.pas"/>
         <RcItem Include="icon.ico">
             <ResourceType>ICON</ResourceType>
             <ResourceId>TRAY_ICON</ResourceId>

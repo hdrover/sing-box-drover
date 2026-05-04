@@ -130,7 +130,7 @@ In your `outbounds` section, define one or more `selector` outbounds. They will 
 }
 ```
 
-The selector `tag` becomes the menu title, `outbounds` become menu items. Selectors are reset to their `default` values on startup.
+The selector `tag` becomes the menu title, `outbounds` become menu items, and `default` sets the initial selection.
 
 ## Program configuration
 
@@ -144,6 +144,7 @@ tun-start-mode = off
 system-proxy-auto = 1
 ; Selector menu layout: "auto", "flat" or "nested"
 selector-menu-layout = auto
+selector-persist = 1
 ```
 
 Parameters:
@@ -166,6 +167,10 @@ Parameters:
     - `auto` — picks `nested` when there are many items, otherwise `flat`.
     - `flat` — each selector name is shown as a disabled header, with its options as radio items below, separated by a divider.
     - `nested` — each selector is shown as a submenu containing its options.
+
+- `selector-persist` — remember selector choices across program restarts:
+    - `1` — restore the last selected option for each selector on the next launch (default).
+    - `0` — start with the `default` from the sing-box config every time.
 
 The rest of the behavior is fully controlled by your sing-box configuration.
 

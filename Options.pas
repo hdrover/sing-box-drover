@@ -22,6 +22,7 @@ type
     systemProxyAuto: boolean;
     tunStartMode: TTunStartMode;
     selectorMenuLayout: TSelectorMenuLayout;
+    selectorPersist: boolean;
     logFile: string;
 
     class function Load(filename: string): TDroverOptions; static;
@@ -90,6 +91,7 @@ begin
         result.tunStartMode := ParseTunStartMode(ReadString(SECTION_MAIN, 'tun-start-mode', ''));
         result.systemProxyAuto := ReadBool(SECTION_MAIN, 'system-proxy-auto', false);
         result.selectorMenuLayout := ParseSelectorMenuLayout(ReadString(SECTION_MAIN, 'selector-menu-layout', ''));
+        result.selectorPersist := ReadBool(SECTION_MAIN, 'selector-persist', true);
 
         s := ReadString(SECTION_MAIN, 'log-file', '');
         if (s <> '') and (not s.Contains(':')) then

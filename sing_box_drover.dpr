@@ -24,7 +24,8 @@ uses
   ConfigUpdater in 'ConfigUpdater.pas',
   ElevatedTrayIcon in 'ElevatedTrayIcon.pas',
   Autostart in 'Autostart.pas',
-  SingBoxCli in 'SingBoxCli.pas';
+  SingBoxCli in 'SingBoxCli.pas',
+  AppState in 'AppState.pas';
 
 {$R *.res}
 

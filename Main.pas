@@ -166,6 +166,7 @@ begin
 
   if not IsProcessElevated then
   begin
+    FDrover.PersistRuntimeState;
     if LaunchSelf(FlagsToCmdLine([flag, afRestart]), Handle) then
       Close;
     exit;
@@ -190,6 +191,7 @@ begin
   if FIsTunActive then
     Include(flags, afTun);
 
+  FDrover.PersistRuntimeState;
   if LaunchSelf(FlagsToCmdLine(flags), Handle, IsProcessElevated) then
     Close;
 end;
@@ -406,6 +408,7 @@ begin
 
   if not IsProcessElevated then
   begin
+    FDrover.PersistRuntimeState;
     if LaunchSelf(FlagsToCmdLine([afTun, afRestart]), Handle) then
       Close;
     exit;

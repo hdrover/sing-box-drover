@@ -7,10 +7,11 @@ uses
   Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.ExtCtrls, Vcl.Menus, SystemProxy,
   System.JSON, System.IOUtils, System.Generics.Collections, Options,
   CoreSupervisor, Logger, AppElevation, AppArgs, SingBoxConfig, SingBoxCli,
-  ConfigReader, ConfigUpdater;
+  ConfigReader, ConfigUpdater, AppState;
 
 const
   WM_DROVER_CAN_CLOSE = WM_APP + 501;
+  STATE_FILENAME = 'sing-box-drover.state.json';
 
 type
   TDroverEventKind = (dekError, dekRunning, dekCoreEvent);
@@ -40,6 +41,7 @@ type
     FIsElevated: boolean;
     FIsTunActive: boolean;
     FSelectors: TConfigSelectors;
+    FAppState: TAppState;
 
     procedure HandleCoreEvent(event: TCoreEvent);
     procedure HandleWorkerTerminated(sender: TObject);
@@ -55,6 +57,8 @@ type
     procedure FlushPendingEvents;
     procedure DestroyConfigUpdater;
     procedure DestroySupervisor;
+    procedure ApplyPersistedSelectors;
+    procedure Log(const AMessage: string);
   public
     configSource: TConfigSource;
     sbConfig: TSingBoxConfig;
@@ -65,6 +69,8 @@ type
     destructor Destroy; override;
 
     procedure ResetSelectors;
+    procedure PersistSelectors;
+    procedure PersistRuntimeState;
     function EditSelector(selectorIdx, outboundIdx: integer; requestId: NativeInt): boolean;
     function EnableSystemProxy: boolean;
     function DisableSystemProxy: boolean;
@@ -99,6 +105,10 @@ begin
   ConfigReader.CheckSingBoxConfig(sbConfig);
   FSelectors := sbConfig.Selectors;
 
+  FAppState := TAppState.Create(currentProcessDir + STATE_FILENAME);
+  if (afRestart in AFlags) or FOptions.selectorPersist then
+    ApplyPersistedSelectors;
+
   FIsElevated := AppElevation.IsProcessElevated;
 
   corePath := FOptions.sbDir + 'sing-box.exe';
@@ -127,6 +137,7 @@ begin
   DestroySupervisor;
 
   FreeAndNil(FSingBoxCli);
+  FreeAndNil(FAppState);
   FreeAndNil(FPendingEvents);
   FreeAndNil(FLogger);
 
@@ -279,6 +290,28 @@ begin
     PostCanClose;
 end;
 
+procedure TDrover.ApplyPersistedSelectors;
+var
+  selectorI, outboundI: integer;
+  selector: ^TConfigSelector;
+  savedValue: string;
+begin
+  for selectorI := low(FSelectors) to high(FSelectors) do
+  begin
+    selector := @FSelectors[selectorI];
+    if not FAppState.GetSelector(selector.name, savedValue) then
+      continue;
+    for outboundI := low(selector.outbounds) to high(selector.outbounds) do
+    begin
+      if selector.outbounds[outboundI] = savedValue then
+      begin
+        selector.defaultIndex := outboundI;
+        break;
+      end;
+    end;
+  end;
+end;
+
 procedure TDrover.ResetSelectors;
 var
   selector: TConfigSelector;
@@ -287,13 +320,13 @@ var
   tasks: TSelectorTasks;
   taskI: integer;
 begin
-  SetLength(tasks, Length(FSelectors));
+  SetLength(tasks, length(FSelectors));
   taskI := 0;
 
   for selector in FSelectors do
   begin
     outboundI := selector.defaultIndex;
-    if (outboundI >= Low(selector.outbounds)) and (outboundI <= High(selector.outbounds)) then
+    if (outboundI >= low(selector.outbounds)) and (outboundI <= high(selector.outbounds)) then
     begin
       task.name := selector.name;
       task.value := selector.outbounds[outboundI];
@@ -310,6 +343,41 @@ begin
   FSupervisor.RequestSetSelectors(tasks, 0);
 end;
 
+procedure TDrover.PersistSelectors;
+var
+  values: TDictionary<string, string>;
+  scope: TArray<string>;
+  i, idx: integer;
+  selector: ^TConfigSelector;
+begin
+  values := TDictionary<string, string>.Create;
+  try
+    SetLength(scope, length(FSelectors));
+    for i := low(FSelectors) to high(FSelectors) do
+    begin
+      selector := @FSelectors[i];
+      scope[i] := selector.name;
+      idx := selector.defaultIndex;
+      if (idx >= low(selector.outbounds)) and (idx <= high(selector.outbounds)) then
+        values.AddOrSetValue(selector.name, selector.outbounds[idx]);
+    end;
+
+    try
+      FAppState.SyncSelectors(values, scope);
+    except
+      on E: Exception do
+        Log(trim(format('Failed to persist selector state. %s', [E.Message])));
+    end;
+  finally
+    values.Free;
+  end;
+end;
+
+procedure TDrover.PersistRuntimeState;
+begin
+  PersistSelectors;
+end;
+
 function TDrover.EditSelector(selectorIdx, outboundIdx: integer; requestId: NativeInt): boolean;
 var
   selector: TConfigSelector;
@@ -317,14 +385,15 @@ var
 begin
   result := false;
 
-  if (selectorIdx < Low(FSelectors)) or (selectorIdx > High(FSelectors)) then
+  if (selectorIdx < low(FSelectors)) or (selectorIdx > high(FSelectors)) then
     exit;
 
   selector := FSelectors[selectorIdx];
-  if (outboundIdx < Low(selector.outbounds)) or (outboundIdx > High(selector.outbounds)) then
+  if (outboundIdx < low(selector.outbounds)) or (outboundIdx > high(selector.outbounds)) then
     exit;
 
   FSelectors[selectorIdx].defaultIndex := outboundIdx;
+  PersistSelectors;
 
   task.name := selector.name;
   task.value := selector.outbounds[outboundIdx];
@@ -395,6 +464,11 @@ procedure TDrover.PostCanClose;
 begin
   if (FNotifyHandle <> 0) and IsWindow(FNotifyHandle) then
     PostMessage(FNotifyHandle, WM_DROVER_CAN_CLOSE, 0, 0);
+end;
+
+procedure TDrover.Log(const AMessage: string);
+begin
+  FLogger.Log('Drover', AMessage);
 end;
 
 end.
