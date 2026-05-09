@@ -185,10 +185,12 @@ The running sing-box instance is not restarted automatically — the new config 
 
 ### About the format
 
-`.bpf` is an undocumented binary container. There is no standalone converter or specification published by the project —
+`.bpf` is an undocumented binary container. There is no specification published by the sing-box project —
 the format is defined only by the source code in the `libbox` package of the sing-box repository.
 
 A `.bpf` file consists of a 1-byte message type, a 1-byte version, and a gzip-compressed payload containing the profile
 name, type, JSON config, and (for remote profiles) the URL, auto-update flag, update interval, and last-updated timestamp.
 
 The easiest way to obtain a `.bpf` file is to export a profile from an official sing-box client.
+To create one from scratch or edit an existing profile in the browser, use
+[sing-box-bpf-editor](https://hdrover.github.io/sing-box-bpf-editor/) — it runs fully client-side.
