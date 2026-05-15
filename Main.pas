@@ -465,9 +465,21 @@ begin
 end;
 
 procedure TfrmMain.TrayIconClick(Sender: TObject);
+var
+  shiftHeld: boolean;
 begin
-  if not FIsTunActive then
-    ToggleSystemProxy(not FIsSystemProxyActive);
+  shiftHeld := (GetKeyState(VK_SHIFT) and $8000) <> 0;
+
+  if shiftHeld then
+  begin
+    if miTun.Visible and miTun.Enabled then
+      ToggleTun(not FIsTunActive);
+  end
+  else
+  begin
+    if not FIsTunActive then
+      ToggleSystemProxy(not FIsSystemProxyActive);
+  end;
 end;
 
 procedure TfrmMain.miSelectorClick(Sender: TObject);
